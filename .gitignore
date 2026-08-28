@@ -9,3 +9,6 @@ node_modules/
 
 # Compound Engineering local scratch
 .context/compound-engineering/
+
+# Release build output
+dist/

@@ -1,0 +1,37 @@
+# Build and publish the wont-scale release assets (plan U8, KTD6).
+#
+# Tag-triggered ONLY — never pull_request_target — with minimum permissions.
+# Publishes dist/install.sh (with the tarball digest baked in) and the pinned
+# tarball as release assets. Run from a 2FA/protected-tag account.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # only to create the release and upload assets
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Verify the tree is consistent
+        run: |
+          node --test 'tests/**/*.test.mjs'
+          node scripts/assemble.mjs --all
+          git diff --exit-code   # committed aggregates must match the modules
+      - name: Build release assets
+        run: node scripts/release.mjs "${GITHUB_REF_NAME}"
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/install.sh
+            dist/wont-scale-${{ github.ref_name }}.tar.gz
