@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { resolveTarget, findSecretFiles, disclosure, runAuditLoop } from '../scripts/lib/session.mjs';
+import { resolveTarget, findSecretFiles, disclosure, runAuditLoop, readDriveFindings } from '../scripts/lib/session.mjs';
+import { writeFileSync as wf } from 'node:fs';
 import { Session } from '../scripts/lib/state.mjs';
 import { makeTempRepo, write, initGit, cleanup } from './helpers/fixtures.mjs';
 import { realpathSync } from 'node:fs';
@@ -85,6 +86,25 @@ test('a live co-owner makes a second session refuse; a stale one is reclaimable'
   writeFileSync(b.file, JSON.stringify({ ...foreign, heartbeat: Date.now() - 60 * 60 * 1000 }));
   assert.doesNotThrow(() => b.open());
   b.close();
+});
+
+test('readDriveFindings reads back and validates the drive output, else falls back', () => {
+  const dir = repo();
+  const fallback = { reason: 4, slug: 'authorisation', status: 'not-verified', severity: 'critical', evidence: [], not_verified_reason: 'mechanical could not check' };
+  const out = join(dir, 'findings-4.json');
+  // valid drive finding -> used
+  wf(out, JSON.stringify({ reason: 4, slug: 'authorisation', status: 'finding', severity: 'critical', evidence: ['no RLS on invoices'] }));
+  const good = readDriveFindings(out, 4, fallback);
+  assert.equal(good.status, 'finding');
+  assert.equal(good.evidence[0], 'no RLS on invoices');
+  // wrong reason -> fallback (a poisoned result for the wrong module)
+  wf(out, JSON.stringify({ reason: 9, status: 'clean', severity: 'high', evidence: [] }));
+  assert.equal(readDriveFindings(out, 4, fallback).status, 'not-verified');
+  // malformed JSON -> fallback
+  wf(out, 'not json at all');
+  assert.equal(readDriveFindings(out, 4, fallback), fallback);
+  // missing file -> fallback
+  assert.equal(readDriveFindings(join(dir, 'nope.json'), 4, fallback), fallback);
 });
 
 test('kit-version skew on resume refuses rather than continuing', () => {

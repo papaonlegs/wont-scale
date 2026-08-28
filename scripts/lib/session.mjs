@@ -8,10 +8,10 @@
  * is injected here so the ordering and the reconcile are verifiable.
  */
 
-import { readdirSync, existsSync, realpathSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { homedir } from 'node:os';
-import { REASON_IDS, isSecretPath, finding } from './findings-schema.mjs';
+import { REASON_IDS, isSecretPath, finding, validateFinding } from './findings-schema.mjs';
 import { runMechanical, reconcile } from './mechanical.mjs';
 
 const PROJECT_MARKERS = ['package.json', 'pyproject.toml', 'go.mod', 'Gemfile', 'Cargo.toml', 'pom.xml', '.git', 'requirements.txt', 'composer.json'];
@@ -67,6 +67,21 @@ export function disclosure(adaptersPresent, secretFiles) {
     lines.push('Move or exclude them, or continue knowing they may be read.');
   }
   return lines.join('\n');
+}
+
+/**
+ * Read a driven module's findings JSON back and validate it (KTD1). Returns the
+ * validated finding, or the fallback (the mechanical slice) when the file is
+ * missing, unparseable, invalid, or for the wrong reason — so a poisoned or
+ * malformed drive result degrades to the mechanical floor rather than being run
+ * as data. This is the read-back the review flagged as missing.
+ */
+export function readDriveFindings(outFile, reason, fallback) {
+  if (!existsSync(outFile)) return fallback;
+  let parsed;
+  try { parsed = JSON.parse(readFileSync(outFile, 'utf8')); } catch { return fallback; }
+  if (parsed && parsed.reason === reason && validateFinding(parsed).ok) return parsed;
+  return fallback;
 }
 
 /**

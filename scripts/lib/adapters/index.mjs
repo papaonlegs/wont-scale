@@ -123,12 +123,17 @@ export const geminiAdapter = {
 
 export const ADAPTERS = [claudeAdapter, codexAdapter, cursorAdapter, geminiAdapter];
 
-/** Detect and probe every adapter; return the ones present with their bucket. */
-export function detectAndProbe(cwd) {
+/**
+ * Detect the adapters present. With `detectOnly`, stop there (no probe) — probing
+ * a tier-1 CLI contacts the provider from inside the repo, so the session probes
+ * only after disclosure and consent (R16). Otherwise probe each driven adapter.
+ */
+export function detectAndProbe(cwd, { detectOnly = false } = {}) {
   const present = [];
   for (const a of ADAPTERS) {
     if (!a.detect()) continue;
     if (a.tier === 'handoff') { present.push({ adapter: a, bucket: BUCKETS.HEALTHY, tier: 'handoff', detail: 'detected (hand-off)' }); continue; }
+    if (detectOnly) { present.push({ adapter: a, bucket: null, tier: 'driven', detail: 'detected (unprobed)' }); continue; }
     const { bucket, detail } = a.probe(cwd);
     present.push({ adapter: a, bucket, tier: 'driven', detail });
   }

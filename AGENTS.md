@@ -10,9 +10,7 @@ Editing rules:
 - `skills/scale-audit/references/*.md` (the ten modules) are the canonical content.
   Every module follows the exact template — heading set, order, fact-check rules —
   described in the modules themselves; keep new content consistent with the others.
-- The Guardrail blocks inside the modules are the single source of truth for
-  `skills/scale-guardrails/SKILL.md` and everything in `templates/`. If you change a
-  Guardrail block, regenerate the aggregates with `node scripts/assemble-guardrails.mjs`
+- The Guardrail blocks inside the modules are the single source of truth for every generated guardrail surface (templates/AGENTS.snippet.md, the on-demand per-tool variants, and the two agent fallbacks). If you change a Guardrail block, regenerate the aggregates with `node scripts/assemble.mjs --all`
   rather than editing them by hand.
 - Fact-check discipline is non-negotiable: no invented incidents, no marketing
   statistics, flagged claims stay out (see any module's Evidence section for the

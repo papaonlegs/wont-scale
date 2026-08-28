@@ -51,32 +51,49 @@ export async function applyFix({ root, finding, prompt, drive, canaryProbe = nul
     if (escaped) return { applied: false, refusedReason: 'write canary escaped the target; the sandbox is not honouring its scope', state: state.state };
   }
 
+  const originalSha = state.headSha || git(root, ['rev-parse', 'HEAD']).out;
+
+  // KTD5: never destroy the reader's uncommitted work. On a dirty tree, isolate
+  // their work in a commit first (offered, not a silent stash) so the fix lands
+  // on a clean base and reverting removes only the fix, leaving their work intact.
+  let baseSha = originalSha;
+  let isolatedWip = null;
+  if (state.state === 'committed-dirty') {
+    git(root, ['add', '-A']);
+    const c = git(root, ['commit', '-m', 'wont-scale: your work in progress, isolated before the audit fix']);
+    if (!c.ok) return { applied: false, refusedReason: 'could not isolate your uncommitted changes before the fix; commit or stash them and re-run', state: state.state };
+    baseSha = git(root, ['rev-parse', 'HEAD']).out;
+    isolatedWip = { sha: baseSha, restoreCommand: `git -C . reset --soft ${originalSha}` };
+  }
+
   const before = manifest(root);
-  const preSha = state.headSha || git(root, ['rev-parse', 'HEAD']).out;
-
   await drive(prompt, root);
-
   const after = manifest(root);
-  // Only files git sees as changed are "expected"; everything else is scrutinised.
-  const gitChanged = git(root, ['status', '--porcelain'])
-    .out.split('\n').filter(Boolean).map((l) => l.slice(3).trim());
+
+  // Only files git now sees changed are "expected"; the WIP is already committed,
+  // so anything else the manifest surfaces is scrutinised. Use bare-path commands
+  // (not porcelain, whose leading status space the git() wrapper trims away).
+  const tracked = git(root, ['diff', '--name-only', 'HEAD']).out.split('\n').filter(Boolean);
+  const untracked = git(root, ['ls-files', '--others', '--exclude-standard']).out.split('\n').filter(Boolean);
+  const gitChanged = [...tracked, ...untracked];
   const diff = containmentDiff(before, after, { expected: gitChanged });
 
-  // HEAD must be unchanged — the agent must not have committed.
+  // HEAD must equal baseSha — the agent must not have committed on top.
   const postSha = git(root, ['rev-parse', 'HEAD']).out;
-  const committed = preSha && postSha && preSha !== postSha;
+  const committed = baseSha && postSha && baseSha !== postSha;
 
-  const revert = { sha: preSha, command: `git -C . reset --hard ${preSha} && git -C . clean -fd` };
+  // Revert restores to baseSha (the reader's work preserved when it was isolated).
+  const revert = { sha: baseSha, command: `git -C . reset --hard ${baseSha} && git -C . clean -fd` };
 
-  if (!diff.contained || committed || diff.gitWrites.length || diff.newEscapes.length) {
-    // Containment breach — revert immediately and report loudly.
-    if (preSha) { git(root, ['reset', '--hard', preSha]); git(root, ['clean', '-fd']); }
+  if (!diff.contained || committed) {
+    if (baseSha) { git(root, ['reset', '--hard', baseSha]); git(root, ['clean', '-fd']); }
     return {
       applied: false,
       contained: false,
       reverted: true,
-      breach: { gitWrites: diff.gitWrites, escapes: diff.newEscapes, committed },
+      breach: { gitWrites: diff.gitWrites, escapes: diff.newEscapes, unexpected: diff.unexpected, committed },
       revert,
+      isolatedWip,
     };
   }
 
@@ -86,6 +103,7 @@ export async function applyFix({ root, finding, prompt, drive, canaryProbe = nul
     changed: diff.changed,
     diff: git(root, ['diff']).out,
     revert,
+    isolatedWip,
   };
 }
 

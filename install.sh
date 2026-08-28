@@ -58,17 +58,21 @@ main() {
   # no-silent-paid-tool-install rule). Fetch+unpack first so we can still hand
   # the reader front door one.
   CACHE_ROOT="${TMPDIR:-/tmp}/wont-scale-kit-$(id -u 2>/dev/null || echo 0)"
+  # KTD6/#15: refuse a symlinked or foreign-owned cache root — do not exec code
+  # from a directory someone else could have planted.
+  if [ -L "$CACHE_ROOT" ]; then die "cache root is a symlink; refusing: $CACHE_ROOT"; fi
+  if [ -e "$CACHE_ROOT" ] && [ ! -O "$CACHE_ROOT" ]; then die "cache root not owned by you; refusing: $CACHE_ROOT"; fi
   mkdir -p "$CACHE_ROOT" 2>/dev/null || true
   chmod 700 "$CACHE_ROOT" 2>/dev/null || true
   KIT_DIR="$CACHE_ROOT/${WONT_SCALE_VERSION}"
-  MARKER="$KIT_DIR/.wont-scale-complete"
+  # Keep the verified tarball so reuse can re-hash the ACTUAL bytes (KTD6/#5),
+  # not a self-written marker string that proves nothing about the unpacked tree.
+  CACHED_TAR="$CACHE_ROOT/wont-scale-${WONT_SCALE_VERSION}.tar.gz"
 
-  # Reuse only a cache whose recorded digest still matches (KTD6): a completeness
-  # marker proves the unpack finished, not that the bytes are still trustworthy.
   reuse=0
-  if [ -f "$MARKER" ]; then
-    recorded="$(cat "$MARKER" 2>/dev/null || echo '')"
-    if [ "$recorded" = "$WONT_SCALE_SHA256" ]; then reuse=1; else say "cached kit failed re-verification — refetching"; rm -rf "$KIT_DIR"; fi
+  if [ -d "$KIT_DIR" ] && [ -f "$CACHED_TAR" ]; then
+    cached_got="$(sha256_of "$CACHED_TAR")"
+    if [ "$cached_got" = "$WONT_SCALE_SHA256" ]; then reuse=1; else say "cached kit failed re-verification — refetching"; rm -rf "$KIT_DIR" "$CACHED_TAR"; fi
   fi
 
   if [ "$reuse" -eq 0 ]; then
@@ -79,9 +83,8 @@ main() {
     got="$(sha256_of "$tmptar")"
     [ "$got" = "$WONT_SCALE_SHA256" ] || { rm -f "$tmptar"; die "integrity check failed (expected $WONT_SCALE_SHA256, got $got) — refusing to run"; }
     rm -rf "$KIT_DIR"; mkdir -p "$KIT_DIR"
-    tar -xzf "$tmptar" -C "$KIT_DIR" --strip-components=1 || die "unpack failed"
-    rm -f "$tmptar"
-    printf '%s' "$WONT_SCALE_SHA256" > "$MARKER"
+    tar -xzf "$tmptar" -C "$KIT_DIR" --strip-components=1 || { rm -f "$tmptar"; die "unpack failed"; }
+    mv "$tmptar" "$CACHED_TAR"
   fi
 
   say "Kit ${WONT_SCALE_VERSION} ready at $KIT_DIR"

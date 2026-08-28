@@ -10,7 +10,7 @@
  */
 
 import { readdirSync, readFileSync, lstatSync, realpathSync, existsSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
@@ -26,10 +26,18 @@ export function git(root, args) {
  * mid-merge stay report-only with the exact command to change that.
  */
 export function safeState(root) {
-  if (!existsSync(join(root, '.git')) && !git(root, ['rev-parse', '--git-dir']).ok) {
+  const gitDir = git(root, ['rev-parse', '--git-dir']);
+  if (!gitDir.ok) {
     return { state: 'no-git', canFix: false, detail: 'not a git repository — run `git init && git add -A && git commit -m "baseline"` first' };
   }
-  if (existsSync(join(root, '.git', 'MERGE_HEAD')) || existsSync(join(root, '.git', 'rebase-merge')) || existsSync(join(root, '.git', 'rebase-apply'))) {
+  // Resolve the real git-dir path (a linked worktree's .git is a file, not a dir),
+  // so mid-merge/rebase detection works outside a classic .git directory. The
+  // returned path is root-relative unless already absolute, so anchor it to root.
+  const gp = (name) => {
+    const p = git(root, ['rev-parse', '--git-path', name]).out;
+    return isAbsolute(p) ? p : join(root, p);
+  };
+  if (existsSync(gp('MERGE_HEAD')) || existsSync(gp('rebase-merge')) || existsSync(gp('rebase-apply'))) {
     return { state: 'mid-merge', canFix: false, detail: 'a merge or rebase is in progress — finish or abort it before applying a fix' };
   }
   const head = git(root, ['rev-parse', 'HEAD']);
@@ -96,6 +104,8 @@ export function containmentDiff(before, after, { expected = [] } = {}) {
   const newEscapes = after.escapes.filter((e) => !before.escapes.includes(e));
   const expectedSet = new Set(expected);
   const unexpected = changed.filter((c) => !expectedSet.has(c.replace(/ \(removed\)$/, '')));
-  const contained = gitWrites.length === 0 && newEscapes.length === 0;
+  // Any change the shown diff did not account for — a git write, a symlink escape,
+  // or a manifest-visible path git did not report — is a containment breach.
+  const contained = gitWrites.length === 0 && newEscapes.length === 0 && unexpected.length === 0;
   return { changed, gitWrites, newEscapes, unexpected, contained };
 }

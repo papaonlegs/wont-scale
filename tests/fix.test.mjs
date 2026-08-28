@@ -79,6 +79,49 @@ test('the write canary refuses the drive when it escapes the target', async () =
   assert.equal(driven, false, 'drive never ran');
 });
 
+test('a dirty tree isolates the reader work; revert preserves it (no data loss)', async () => {
+  const r = repo();
+  write(r, 'src/a.js', 'original');
+  initGit(r);
+  // reader has uncommitted work + an untracked file
+  writeFileSync(join(r, 'src', 'a.js'), 'my work in progress');
+  writeFileSync(join(r, 'src', 'notes.txt'), 'important notes');
+  const drive = async (_p, root) => writeFileSync(join(root, 'src', 'b.js'), 'the fix');
+  const res = await applyFix({ root: r, finding: F(6, 'high'), prompt: 'fix', drive });
+  assert.equal(res.applied, true);
+  assert.ok(res.isolatedWip, 'the reader work was isolated');
+  // now revert the fix
+  revertTo(r, res.revert.sha);
+  // the reader work survives: the isolated commit still holds a.js edit + notes.txt
+  assert.equal(git(r, 'show', 'HEAD:src/a.js'), 'my work in progress');
+  assert.equal(git(r, 'show', 'HEAD:src/notes.txt'), 'important notes');
+  // and the fix is gone
+  assert.equal(git(r, 'status', '--porcelain'), '');
+});
+
+test('a fix writing an unexpected out-of-diff path trips containment', async () => {
+  const r = repo();
+  write(r, 'src/a.js', 'x');
+  initGit(r);
+  const drive = async (_p, root) => {
+    writeFileSync(join(root, 'src', 'a.js'), 'fixed');
+    writeFileSync(join(root, 'sneaky.js'), 'unexpected payload'); // not the finding's file
+  };
+  // expected is computed from git status inside applyFix; a second untracked file
+  // still shows in git status, so this asserts the manifest+fold catches surprises
+  // that git does NOT surface. Simulate that by writing to a gitignored path:
+  writeFileSync(join(r, '.gitignore'), 'secret-dir/\n');
+  git(r, 'add', '-A'); git(r, 'commit', '-q', '-m', 'ignore');
+  const drive2 = async (_p, root) => {
+    writeFileSync(join(root, 'src', 'a.js'), 'fixed');
+    mkdirSync(join(root, 'secret-dir'), { recursive: true });
+    writeFileSync(join(root, 'secret-dir', 'payload.js'), 'hidden'); // gitignored -> not in git status
+  };
+  const res = await applyFix({ root: r, finding: F(6, 'high'), prompt: 'fix', drive: drive2 });
+  assert.equal(res.contained, false, 'gitignored write is a breach');
+  assert.ok(res.breach.unexpected.some((u) => u.includes('secret-dir')));
+});
+
 test('no-git and unborn-HEAD targets refuse the fix report-only', async () => {
   const noGit = repo();
   write(noGit, 'a.js', 'x');
