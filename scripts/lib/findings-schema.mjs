@@ -13,17 +13,18 @@
 // is the reconciled field (KTD7): a single "how bad" per reason that U5 and U7
 // both read, instead of each deriving its own from the module Tier or the
 // wizard's KILL_ORDER.
+const SERIES = 'https://papa.onle.gs/writing';
 export const REASONS = Object.freeze({
-  1: { slug: 'data-models', tier: 'T2', severity: 'high', title: 'You have six data models and you think you have one' },
-  2: { slug: 'query-performance', tier: 'T2', severity: 'high', title: '40ms locally, 40 seconds in production' },
-  3: { slug: 'authentication', tier: 'T1', severity: 'critical', title: 'The login page is a prop' },
-  4: { slug: 'authorisation', tier: 'T1', severity: 'critical', title: 'Authorisation is a vibe' },
-  5: { slug: 'trust-boundary', tier: 'T1', severity: 'critical', title: 'Your frontend talks straight to the database' },
-  6: { slug: 'idempotency', tier: 'T1', severity: 'high', title: 'Nothing is idempotent and everything runs twice' },
-  7: { slug: 'statelessness', tier: 'T2', severity: 'high', title: "It works on one box, and that's the whole problem" },
-  8: { slug: 'observability', tier: 'T1', severity: 'high', title: "You didn't write it and you can't see it either" },
-  9: { slug: 'unit-economics', tier: 'T1', severity: 'high', title: 'Profitable at 100 users, bankrupt at 10,000' },
-  10: { slug: 'bus-factor', tier: 'T1', severity: 'high', title: "The bus factor isn't one, it's zero" },
+  1: { slug: 'data-models', tier: 'T2', severity: 'high', title: 'You have six data models and you think you have one', article: `${SERIES}/you-have-six-data-models.html` },
+  2: { slug: 'query-performance', tier: 'T2', severity: 'high', title: '40ms locally, 40 seconds in production', article: `${SERIES}/40ms-locally-40-seconds-in-production.html` },
+  3: { slug: 'authentication', tier: 'T1', severity: 'critical', title: 'The login page is a prop', article: `${SERIES}/the-login-page-is-a-prop.html` },
+  4: { slug: 'authorisation', tier: 'T1', severity: 'critical', title: 'Authorisation is a vibe', article: `${SERIES}/authorisation-is-a-vibe.html` },
+  5: { slug: 'trust-boundary', tier: 'T1', severity: 'critical', title: 'Your frontend talks straight to the database', article: `${SERIES}/your-frontend-talks-to-the-database.html` },
+  6: { slug: 'idempotency', tier: 'T1', severity: 'high', title: 'Nothing is idempotent and everything runs twice', article: `${SERIES}/nothing-is-idempotent.html` },
+  7: { slug: 'statelessness', tier: 'T2', severity: 'high', title: "It works on one box, and that's the whole problem", article: `${SERIES}/it-works-on-one-box.html` },
+  8: { slug: 'observability', tier: 'T1', severity: 'high', title: "You didn't write it and you can't see it either", article: `${SERIES}/you-cant-see-it-either.html` },
+  9: { slug: 'unit-economics', tier: 'T1', severity: 'high', title: 'Profitable at 100 users, bankrupt at 10,000', article: `${SERIES}/profitable-at-100-bankrupt-at-10000.html` },
+  10: { slug: 'bus-factor', tier: 'T1', severity: 'high', title: "The bus factor isn't one, it's zero", article: `${SERIES}/the-bus-factor-is-zero.html` },
 });
 
 export const REASON_IDS = Object.freeze(Object.keys(REASONS).map(Number));
