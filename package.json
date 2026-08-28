@@ -7,6 +7,9 @@
   "bin": {
     "wont-scale-audit": "./scripts/first-audit.mjs"
   },
+  "scripts": {
+    "test": "node --test 'tests/**/*.test.mjs'"
+  },
   "engines": {
     "node": ">=18"
   },
