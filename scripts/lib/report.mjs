@@ -8,9 +8,8 @@
  * professional nudge (R11/AE4).
  */
 
-import { REASONS } from './findings-schema.mjs';
+import { REASONS, severityRank } from './findings-schema.mjs';
 
-const SEVERITY_ORDER = { critical: 0, high: 1, advisory: 2 };
 const SEVERITY_HEADING = {
   critical: 'Critical — fix before more users arrive',
   high: 'High — fix before scale or payments',
@@ -83,7 +82,7 @@ export function renderReport(findings, { project = 'your project', date = 'today
   }
 
   for (const sev of ['critical', 'high', 'advisory']) {
-    const items = bySeverity[sev].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+    const items = bySeverity[sev].sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
     if (!items.length) continue;
     out.push(`## ${SEVERITY_HEADING[sev]}`);
     out.push('');

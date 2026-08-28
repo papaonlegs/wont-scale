@@ -11,7 +11,7 @@
  * --json, --no-fix.
  */
 
-import { writeFileSync, mkdtempSync, realpathSync } from 'node:fs';
+import { writeFileSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createInterface } from 'node:readline/promises';
@@ -43,19 +43,17 @@ async function ask(rl, q) { return rl ? (await rl.question(q)).trim() : ''; }
 
 /** Drive one module through a healthy tier-1 adapter, returning a finding. */
 function makeDriver(adapter, tmpDir) {
-  return async (reason, root) => {
+  return async (reason, root, mechanical) => {
     const promptFile = join(tmpDir, `audit-${reason}.txt`);
     writeFileSync(promptFile, auditPromptFor(reason));
     const outFile = join(tmpDir, `findings-${reason}.json`);
     // The adapter writes findings JSON to outFile; the session reads it (KTD1).
-    const args = adapter.auditArgs(promptFile).concat();
     try {
-      execFileSync(adapter.id, args, { cwd: root, timeout: 120000, encoding: 'utf8',
+      execFileSync(adapter.id, adapter.auditArgs(promptFile), { cwd: root, timeout: 120000, encoding: 'utf8',
         env: { ...process.env, WONT_SCALE_FINDINGS_OUT: outFile } });
-    } catch { /* fall through to mechanical for this reason */ }
-    // Fallback: use the mechanical result for this reason if the drive produced nothing.
-    const mech = runMechanical(root).find((f) => f.reason === reason);
-    return mech;
+    } catch { /* fall through to the already-computed mechanical result */ }
+    // The runAuditLoop passes the single mechanical run; reuse this reason's slice.
+    return mechanical.find((f) => f.reason === reason);
   };
 }
 

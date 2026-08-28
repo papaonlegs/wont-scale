@@ -14,18 +14,18 @@
  * never clean.
  */
 
-import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { REASONS } from './findings-schema.mjs';
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { REASON_IDS, finding } from './findings-schema.mjs';
 
 const CODE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|py|rb|go|java|php)$/;
 const SKIP_DIR = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'vendor', '__pycache__', 'coverage']);
 
-/** Walk a repo, yielding { path, rel, text } for each code file, bounded. */
-function* codeFiles(root, { maxFiles = 4000 } = {}) {
-  let count = 0;
+/** Walk a repo once into { rel, text } records for each code file, bounded. */
+function collectCodeFiles(root, { maxFiles = 4000 } = {}) {
+  const files = [];
   const stack = [root];
-  while (stack.length && count < maxFiles) {
+  while (stack.length && files.length < maxFiles) {
     const dir = stack.pop();
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
@@ -36,16 +36,17 @@ function* codeFiles(root, { maxFiles = 4000 } = {}) {
       if (!CODE_EXT.test(e.name)) continue;
       let text;
       try { text = readFileSync(p, 'utf8'); } catch { continue; }
-      count += 1;
-      yield { path: p, rel: p.slice(root.length + 1), text };
+      files.push({ rel: relative(root, p), text });
+      if (files.length >= maxFiles) break;
     }
   }
+  return files;
 }
 
-/** Collect regex hits across the repo as `rel:line` evidence, capped. */
-function grepRepo(root, re, { cap = 5 } = {}) {
+/** Collect regex hits across the pre-walked file list as `rel:line`, capped. */
+function grepFiles(files, re, { cap = 5 } = {}) {
   const hits = [];
-  for (const f of codeFiles(root)) {
+  for (const f of files) {
     const lines = f.text.split('\n');
     for (let i = 0; i < lines.length && hits.length < cap; i++) {
       if (re.test(lines[i])) hits.push(`${f.rel}:${i + 1}`);
@@ -55,68 +56,56 @@ function grepRepo(root, re, { cap = 5 } = {}) {
   return hits;
 }
 
-const finding = (reason, status, evidence, notReason) => ({
-  reason,
-  slug: REASONS[reason].slug,
-  status,
-  severity: REASONS[reason].severity,
-  evidence,
-  ...(status === 'not-verified' ? { not_verified_reason: notReason } : {}),
-});
-
 /**
  * Per-reason mechanical detectors. Each returns one finding: a hit list means
  * `finding`, an empty scan means `clean`, and a reason a static pass cannot
  * settle (RLS enforcement, real query counts) returns `not-verified` with why.
  */
 const DETECTORS = {
-  3(root) { // authentication — hardcoded secrets, non-expiring tokens
-    const secrets = grepRepo(root, /(jwt|token|secret|apikey|api_key)\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]/i);
-    const noExpiry = grepRepo(root, /jwt\.sign\([^)]*\)/i).filter(() => true);
-    const hits = [...secrets];
-    if (secrets.length) return finding(3, 'finding', hits, null);
-    if (noExpiry.length) return finding(3, 'finding', noExpiry, null);
-    return finding(3, 'clean', [], null);
+  3(files) { // authentication — hardcoded secrets, non-expiring tokens
+    const secrets = grepFiles(files, /(jwt|token|secret|apikey|api_key)\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]/i);
+    if (secrets.length) return finding(3, 'finding', secrets);
+    const noExpiry = grepFiles(files, /jwt\.sign\([^)]*\)/i);
+    if (noExpiry.length) return finding(3, 'finding', noExpiry);
+    return finding(3, 'clean', []);
   },
   4() { // authorisation — RLS enforcement needs a live DB
     return finding(4, 'not-verified', [], 'RLS enforcement needs a live database connection; run the AI audit or the SQL checks in the module');
   },
-  5(root) { // trust boundary — privileged keys in client-exposed vars
-    const hits = grepRepo(root, /NEXT_PUBLIC_[A-Z_]*(SERVICE|SECRET|ADMIN|PRIVATE)/);
-    const service = grepRepo(root, /service[_-]?role[_-]?key/i);
-    const all = [...hits, ...service];
-    if (all.length) return finding(5, 'finding', all, null);
-    return finding(5, 'clean', [], null);
+  5(files) { // trust boundary — privileged keys in client-exposed vars
+    const all = [
+      ...grepFiles(files, /NEXT_PUBLIC_[A-Z_]*(SERVICE|SECRET|ADMIN|PRIVATE)/),
+      ...grepFiles(files, /service[_-]?role[_-]?key/i),
+    ];
+    return all.length ? finding(5, 'finding', all) : finding(5, 'clean', []);
   },
-  6(root) { // idempotency — webhook handlers with no dedup
-    const webhooks = grepRepo(root, /webhook|stripe\.webhooks|constructEvent/i);
-    if (!webhooks.length) return finding(6, 'clean', [], null);
-    const dedup = grepRepo(root, /idempotenc|processed_events|ON CONFLICT|unique.*event/i);
-    if (dedup.length) return finding(6, 'clean', dedup, null);
-    return finding(6, 'finding', webhooks, null);
+  6(files) { // idempotency — webhook handlers with no dedup
+    const webhooks = grepFiles(files, /webhook|stripe\.webhooks|constructEvent/i);
+    if (!webhooks.length) return finding(6, 'clean', []);
+    const dedup = grepFiles(files, /idempotenc|processed_events|ON CONFLICT|unique.*event/i);
+    return dedup.length ? finding(6, 'clean', dedup) : finding(6, 'finding', webhooks);
   },
-  8(root) { // observability — no error tracker, console.log as telemetry
+  8(files, root) { // observability — no error tracker, console.log as telemetry
     const pkg = readPkg(root);
     const hasTracker = pkg && Object.keys(pkg.deps).some((d) =>
       /@sentry|posthog|dd-trace|@opentelemetry|newrelic|@highlight-run/.test(d));
-    if (hasTracker) return finding(8, 'clean', ['error tracker in dependencies'], null);
-    const logs = grepRepo(root, /console\.log|print\(/);
-    return finding(8, 'finding', logs.length ? logs : ['no error-tracking dependency found'], null);
+    if (hasTracker) return finding(8, 'clean', ['error tracker in dependencies']);
+    const logs = grepFiles(files, /console\.log|print\(/);
+    return finding(8, 'finding', logs.length ? logs : ['no error-tracking dependency found']);
   },
-  9(root) { // unit economics — metered API calls, rate limiting
-    const metered = grepRepo(root, /openai|anthropic|@anthropic-ai|replicate|twilio|sendgrid/i);
-    if (!metered.length) return finding(9, 'clean', [], null);
-    const limiter = grepRepo(root, /rate.?limit|ratelimit|token.?bucket|@upstash\/ratelimit/i);
-    if (limiter.length) return finding(9, 'clean', limiter, null);
-    return finding(9, 'finding', metered, null);
+  9(files) { // unit economics — metered API calls, rate limiting
+    const metered = grepFiles(files, /openai|anthropic|@anthropic-ai|replicate|twilio|sendgrid/i);
+    if (!metered.length) return finding(9, 'clean', []);
+    const limiter = grepFiles(files, /rate.?limit|ratelimit|token.?bucket|@upstash\/ratelimit/i);
+    return limiter.length ? finding(9, 'clean', limiter) : finding(9, 'finding', metered);
   },
-  10(root) { // bus factor — README setup path, any tests
+  10(files, root) { // bus factor — README setup path, any tests
     const hasReadme = existsSync(join(root, 'README.md'));
-    const hasTests = [...codeFiles(root)].some((f) => /\.(test|spec)\./.test(f.rel) || f.rel.includes('__tests__'));
+    const hasTests = files.some((f) => /\.(test|spec)\./.test(f.rel) || f.rel.includes('__tests__'));
     const missing = [];
     if (!hasReadme) missing.push('no README.md');
     if (!hasTests) missing.push('no test files found');
-    return missing.length ? finding(10, 'finding', missing, null) : finding(10, 'clean', [], null);
+    return missing.length ? finding(10, 'finding', missing) : finding(10, 'clean', []);
   },
 };
 
@@ -136,12 +125,11 @@ const STATIC_ONLY_NOT_VERIFIED = {
 
 /** Run the mechanical audit over a target repo, one finding per reason. */
 export function runMechanical(root) {
-  const out = [];
-  for (const n of Object.keys(REASONS).map(Number)) {
-    if (DETECTORS[n]) out.push(DETECTORS[n](root));
-    else out.push(finding(n, 'not-verified', [], STATIC_ONLY_NOT_VERIFIED[n] || 'no mechanical check for this reason'));
-  }
-  return out;
+  const files = collectCodeFiles(root); // one walk, shared across every detector
+  return REASON_IDS.map((n) =>
+    DETECTORS[n]
+      ? DETECTORS[n](files, root)
+      : finding(n, 'not-verified', [], STATIC_ONLY_NOT_VERIFIED[n] || 'no mechanical check for this reason'));
 }
 
 /**

@@ -9,7 +9,7 @@
  * refuse. The report, not this file, is the durable revert source.
  */
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync, lstatSync, statSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, lstatSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -91,5 +91,3 @@ export class Session {
 
   close() { try { rmSync(this.file, { force: true }); } catch { /* ignore */ } }
 }
-
-export { keyFor, STALE_MS };

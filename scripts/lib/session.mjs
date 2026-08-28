@@ -9,9 +9,9 @@
  */
 
 import { readdirSync, existsSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { homedir } from 'node:os';
-import { REASONS, isSecretPath } from './findings-schema.mjs';
+import { REASON_IDS, isSecretPath, finding } from './findings-schema.mjs';
 import { runMechanical, reconcile } from './mechanical.mjs';
 
 const PROJECT_MARKERS = ['package.json', 'pyproject.toml', 'go.mod', 'Gemfile', 'Cargo.toml', 'pom.xml', '.git', 'requirements.txt', 'composer.json'];
@@ -39,13 +39,15 @@ export function findSecretFiles(root, { maxDepth = 3 } = {}) {
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
       if (e.name === 'node_modules' || e.name === '.git') continue;
-      if (e.isFile() && isSecretPath(e.name)) found.push(join(dir, e.name).slice(root.length + 1));
+      if (e.isFile() && isSecretPath(e.name)) found.push(relative(root, join(dir, e.name)));
       else if (e.isDirectory()) walk(join(dir, e.name), depth + 1);
     }
   };
   walk(root, 0);
   return found;
 }
+
+// PROJECT_MARKERS is module-private; resolveTarget is the only consumer.
 
 /**
  * The R16 disclosure string, composed before the probe. It names the providers
@@ -75,24 +77,21 @@ export function disclosure(adaptersPresent, secretFiles) {
  * resume; already-complete reasons are skipped.
  */
 export async function runAuditLoop({ root, driveModule, session = null, onProgress = () => {} }) {
-  const mechanical = runMechanical(root);
+  const mechanical = runMechanical(root); // one walk; also threaded to the driver
   const findings = [];
-  for (const n of Object.keys(REASONS).map(Number)) {
+  for (const n of REASON_IDS) {
     if (session && session.isComplete(n) && session.data.findings) {
       const prior = session.data.findings.find((f) => f.reason === n);
       if (prior) { findings.push(prior); onProgress(n, 'resumed'); continue; }
     }
     let f;
-    try { f = await driveModule(n, root); }
-    catch (e) { f = { reason: n, slug: REASONS[n].slug, status: 'not-verified', severity: REASONS[n].severity, evidence: [], not_verified_reason: `drive failed: ${String(e).slice(0, 120)}` }; }
-    if (!f) f = { reason: n, slug: REASONS[n].slug, status: 'not-verified', severity: REASONS[n].severity, evidence: [], not_verified_reason: 'drive returned nothing' };
+    try { f = await driveModule(n, root, mechanical); }
+    catch (e) { f = finding(n, 'not-verified', [], `drive failed: ${String(e).slice(0, 120)}`); }
+    if (!f) f = finding(n, 'not-verified', [], 'drive returned nothing');
     findings.push(f);
     if (session) { session.markComplete(n); session.set({ findings }); }
     onProgress(n, f.status);
   }
   // AE9 reconcile across the whole set
-  const reconciled = reconcile(findings, mechanical);
-  return reconciled;
+  return reconcile(findings, mechanical);
 }
-
-export { PROJECT_MARKERS };

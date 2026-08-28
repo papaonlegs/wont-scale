@@ -9,12 +9,13 @@
  * including ignored paths and .git/, taken before and after the drive.
  */
 
-import { readdirSync, readFileSync, statSync, lstatSync, realpathSync, existsSync } from 'node:fs';
-import { join, resolve, relative } from 'node:path';
+import { readdirSync, readFileSync, lstatSync, realpathSync, existsSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
-function git(root, args) {
+/** Run git in `root`; { ok, out } — never throws. Shared with fix.mjs. */
+export function git(root, args) {
   try { return { ok: true, out: execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim() }; }
   catch (e) { return { ok: false, out: (e.stdout || '') + (e.stderr || '') }; }
 }

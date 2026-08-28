@@ -7,9 +7,8 @@
  * manifest, keep/revert — is verifiable without a live model.
  */
 
-import { execFileSync } from 'node:child_process';
-import { REASONS } from './findings-schema.mjs';
-import { safeState, manifest, containmentDiff } from './gitstate.mjs';
+import { REASONS, severityRank } from './findings-schema.mjs';
+import { safeState, manifest, containmentDiff, git } from './gitstate.mjs';
 
 // Reasons whose module first-fix is additive and bounded — a real one-step fix.
 // Structural rewrites (authz/trust-boundary/data-models/statelessness) are not
@@ -22,18 +21,13 @@ const TRACTABLE = new Set([3, 6, 8, 9, 10]);
  * passed over, so the session can say plainly why.
  */
 export function selectTractable(findings) {
-  const rank = { critical: 0, high: 1, advisory: 2 };
-  const open = findings.filter((f) => f.status === 'finding').sort((a, b) => rank[a.severity] - rank[b.severity]);
+  const open = findings.filter((f) => f.status === 'finding')
+    .sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
   const finding = open.find((f) => TRACTABLE.has(f.reason)) || null;
   const skipped = finding && open[0] && open[0].reason !== finding.reason
     ? { reason: open[0].reason, title: REASONS[open[0].reason].title }
     : null;
   return { finding, skipped };
-}
-
-function git(root, args) {
-  try { return { ok: true, out: execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim() }; }
-  catch (e) { return { ok: false, out: (e.stdout || '') + (e.stderr || '') }; }
 }
 
 /**
@@ -102,5 +96,3 @@ export function revertTo(root, sha) {
   git(root, ['clean', '-fd']);
   return { ok: r.ok, detail: r.out };
 }
-
-export { TRACTABLE };

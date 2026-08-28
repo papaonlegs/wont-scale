@@ -12,8 +12,8 @@
  * prompt for the reader to paste rather than driving them in v1.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, unlinkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const BUCKETS = Object.freeze({
@@ -135,4 +135,4 @@ export function detectAndProbe(cwd) {
   return present;
 }
 
-export { classify, PROBE_PROMPT, CANARY };
+export { classify, CANARY };

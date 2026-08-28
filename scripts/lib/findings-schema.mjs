@@ -31,6 +31,25 @@ export const REASON_IDS = Object.freeze(Object.keys(REASONS).map(Number));
 export const SEVERITIES = Object.freeze(['critical', 'high', 'advisory']);
 export const STATUSES = Object.freeze(['finding', 'not-verified', 'clean']);
 
+/** Ordinal rank of a severity for sorting — the one source of the ordering. */
+export const severityRank = (s) => SEVERITIES.indexOf(s);
+
+/**
+ * Build a finding for a reason from its canonical slug and severity. The single
+ * builder used by the mechanical path and the session, so the shape (and the
+ * conditional not_verified_reason) lives in one place.
+ */
+export function finding(reason, status, evidence = [], notVerifiedReason = null) {
+  return {
+    reason,
+    slug: REASONS[reason].slug,
+    status,
+    severity: REASONS[reason].severity,
+    evidence,
+    ...(status === 'not-verified' ? { not_verified_reason: notVerifiedReason } : {}),
+  };
+}
+
 // One secret-path set (KTD3), consumed by both the R16 warning and the
 // deny-read set — widened past the reviewer's minimum so a credential file is
 // not silently sent to a model provider. Matched against basenames.
