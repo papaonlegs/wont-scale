@@ -1,0 +1,16 @@
+{
+  "name": "wont-scale",
+  "description": "Companion audit kit for '10 reasons why your vibe coded app won't scale' — audit skills, guardrails, and auditor agents.",
+  "owner": {
+    "name": "Farouk Umar",
+    "url": "https://papa.onle.gs"
+  },
+  "plugins": [
+    {
+      "name": "wont-scale",
+      "source": "./",
+      "description": "Audit kit for the ten ways vibe-coded apps fail at scale: /scale-audit, /first-audit, guardrails, and auditor agents.",
+      "version": "0.1.0"
+    }
+  ]
+}

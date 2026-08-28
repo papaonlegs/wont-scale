@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+*.log
+
+# Never commit audit output from test runs against real projects
+/WONT-SCALE-REPORT.md
+/FIRST-AUDIT.md
+/wont-scale.config.json

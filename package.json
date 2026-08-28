@@ -1,0 +1,15 @@
+{
+  "name": "wont-scale",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Companion audit kit for '10 reasons why your vibe coded app won't scale' — https://papa.onle.gs/writing/index.html",
+  "type": "module",
+  "bin": {
+    "wont-scale-audit": "./scripts/first-audit.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "Farouk Umar (https://papa.onle.gs)",
+  "license": "MIT"
+}

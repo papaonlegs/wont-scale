@@ -1,0 +1,49 @@
+# Won't-scale gatekeeper on every pull request.
+#
+# Copy to .github/workflows/wont-scale-audit.yml in YOUR app repo, then:
+#   1. Add ANTHROPIC_API_KEY to the repo's Actions secrets.
+#   2. Add a KIT_TOKEN secret (fine-grained PAT with read access to the private
+#      papaonlegs/wont-scale repo) — or drop that step and vendor the kit into
+#      your repo instead.
+#
+# The job reviews only the PR diff against the ten failure modes and comments
+# the gatekeeper verdict. It does not block merges unless you make the job
+# required in branch protection.
+
+name: wont-scale audit
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  gatekeeper:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out the audit kit
+        uses: actions/checkout@v4
+        with:
+          repository: papaonlegs/wont-scale
+          token: ${{ secrets.KIT_TOKEN }}
+          path: .wont-scale-kit
+
+      - name: Run the gatekeeper
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--plugin-dir .wont-scale-kit"
+          prompt: |
+            Act as the scale-gatekeeper agent defined in
+            .wont-scale-kit/agents/scale-gatekeeper.md. Review the diff between
+            origin/${{ github.base_ref }} and HEAD against the ten wont-scale
+            failure modes, using the modules in
+            .wont-scale-kit/skills/scale-audit/references/ as the standard.
+            Post your verdict (PASS / WARN / BLOCK with evidence) as a PR comment.
