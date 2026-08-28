@@ -1,11 +1,10 @@
-<!-- wont-scale guardrails v1 — generated from the audit modules; regenerate, don't hand-edit.
+<!-- wont-scale guardrails — generated from the audit modules; regenerate, don't hand-edit.
      Source: https://github.com/papaonlegs/wont-scale · Series: https://papa.onle.gs/writing/index.html -->
 <!-- wont-scale:begin -->
 
 ## Won't-scale guardrails
 
-Standing rules for AI-assisted changes in this repo. Full audit modules and the
-essays behind each rule: https://papa.onle.gs/writing/index.html
+Standing rules for AI-assisted changes in this repo. Full audit modules and the essays behind each rule: https://papa.onle.gs/writing/index.html
 
 ### 1 — You have six data models and you think you have one
 

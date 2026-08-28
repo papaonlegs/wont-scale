@@ -6,3 +6,15 @@ node_modules/
 /WONT-SCALE-REPORT.md
 /FIRST-AUDIT.md
 /wont-scale.config.json
+
+# Compound Engineering local scratch
+.context/compound-engineering/
+
+# Compiled TypeScript output (built by `npm run build`; shipped in the release tarball)
+dist/
+
+# Release artifacts (tarball + stamped installer, produced by scripts/release.ts)
+release/
+
+# Planning docs are private working artifacts, not part of the repo
+docs/plans/

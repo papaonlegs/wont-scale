@@ -1,10 +1,14 @@
-# Won't-scale gatekeeper on every pull request.
+# OPTIONAL template: won't-scale gatekeeper on every pull request.
 #
-# Copy to .github/workflows/wont-scale-audit.yml in YOUR app repo, then:
-#   1. Add ANTHROPIC_API_KEY to the repo's Actions secrets.
-#   2. Add a KIT_TOKEN secret (fine-grained PAT with read access to the private
-#      papaonlegs/wont-scale repo) — or drop that step and vendor the kit into
-#      your repo instead.
+# This is not run in this repo's own CI. Copy it into YOUR app repo as
+# .github/workflows/wont-scale-audit.yml, then:
+#   1. Add ANTHROPIC_API_KEY to that repo's Actions secrets.
+#   2. That's it — wont-scale is a public repo, so no token is needed to
+#      fetch the kit. The checkout step below pulls it straight from
+#      papaonlegs/wont-scale. If you'd rather not add a second checkout,
+#      pin a release and fetch it the way the installer does:
+#      curl -fsSL https://github.com/papaonlegs/wont-scale/releases/latest/download/install.sh | sh
+#      or vendor the kit into your repo instead.
 #
 # The job reviews only the PR diff against the ten failure modes and comments
 # the gatekeeper verdict. It does not block merges unless you make the job
@@ -28,11 +32,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check out the audit kit
+      - name: Check out the audit kit (public repo, no token needed)
         uses: actions/checkout@v4
         with:
           repository: papaonlegs/wont-scale
-          token: ${{ secrets.KIT_TOKEN }}
           path: .wont-scale-kit
 
       - name: Run the gatekeeper

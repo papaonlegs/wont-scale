@@ -1,0 +1,33 @@
+# CODEOWNERS — review gate for paths that are executable instructions, not prose.
+#
+# wont-scale is public, so any of these paths is PR-writable by a stranger. Each
+# one is content or code that runs with write scope on a reader's own machine
+# during an audit or fix drive: a module's "First fix" text is a literal
+# instruction handed to the reader's AI CLI; an adapter flag is the difference
+# between a read-only probe and a scoped write; install.sh and the release
+# workflow are what puts bytes on the reader's disk before anything else has
+# run. A "looks like a docs typo" diff in any of these can silently widen what
+# gets executed, so none of them merge without review. See RD6 in the project
+# plan for the full threat model.
+
+# Audit module content — the checks and fixes a driven agent executes verbatim.
+/skills/scale-audit/references/** @papaonlegs
+
+# Adapter contract — CLI invocation flags that define the permission posture.
+/scripts/lib/adapters/** @papaonlegs
+
+# Fix drive, safe-state, and the shared findings/secret-path contract.
+/scripts/lib/fix.ts @papaonlegs
+/scripts/lib/gitstate.ts @papaonlegs
+/scripts/lib/findings-schema.ts @papaonlegs
+
+# Assembler and release tooling — what ends up in every generated surface
+# and in the pinned, checksummed installer payload.
+/scripts/assemble.ts @papaonlegs
+/scripts/release.ts @papaonlegs
+
+# The first, unverified hop of the curl-pipe-sh bootstrap.
+/install.sh @papaonlegs
+
+# CI workflows, including the release workflow that publishes the pinned asset.
+/.github/workflows/** @papaonlegs

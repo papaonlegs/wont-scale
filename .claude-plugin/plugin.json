@@ -2,7 +2,7 @@
   "name": "wont-scale",
   "displayName": "Won't Scale — Audit Kit",
   "version": "0.1.0",
-  "description": "Companion audit kit for the series '10 reasons why your vibe coded app won't scale'. Ships /scale-audit, /first-audit, coding-time guardrails, and two auditor agents.",
+  "description": "Companion audit kit for the series '10 reasons why your vibe coded app won't scale'. Ships /scale-audit, /first-audit, two auditor agents, and a generator for coding-time guardrails.",
   "author": {
     "name": "Farouk Umar",
     "url": "https://papa.onle.gs"

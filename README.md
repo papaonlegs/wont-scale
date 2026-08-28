@@ -3,15 +3,41 @@
 Companion audit kit for **[10 reasons why your vibe coded app won't scale](https://papa.onle.gs/writing/index.html)**.
 
 The series explains why vibe-coded apps fail when real users arrive. This repo is the
-part you can run: the ten reasons as audit modules with runnable checks, packaged as a
-Claude Code plugin, standalone skills and agents, guardrail rules for every major AI
-coding tool, and an interactive wizard that scopes your first audit to your actual
-stakes — because a weekend prototype and an app moving real money should not get the
-same list.
+part you can run — two ways in.
 
-## Start in sixty seconds
+## Audit your repo now
 
-**Claude Code** (the full experience):
+One command runs an interactive session: it detects your stack and your AI CLI, drives
+that CLI through the ten reasons, writes an evidence-first report, and offers to apply
+the first fix — with the diff shown and your say-so before anything changes.
+
+```
+curl -fsSL https://github.com/papaonlegs/wont-scale/releases/latest/download/install.sh | sh
+```
+
+Prefer to read it before you run it (you should):
+
+```
+curl -fsSL https://github.com/papaonlegs/wont-scale/releases/latest/download/install.sh -o install.sh
+less install.sh          # the published SHA-256 is in the release notes
+sh install.sh /path/to/your-app
+```
+
+**What leaves your machine:** the audit sends the code it reads to *your own* AI CLI's
+model provider (Anthropic for Claude Code, OpenAI for Codex). If this is a work repo,
+that is your employer's or customers' code — the session tells you before it probes, and
+warns you when secret-bearing files are present. Nothing is stored by this tool. No AI
+CLI on the machine? The session runs a lighter mechanical check and hands you the report
+plus the deeper prompts to run yourself.
+
+## Or browse the kit
+
+The whole audit is here to read and take. Every reason is a module with symptoms you can
+observe, checks you can run (read-only shell and SQL), the questions a grep can't answer,
+the fix in priority order, a copy-paste guardrail for your AI tools, and the real
+incidents behind it.
+
+**Claude Code plugin:**
 
 ```
 /plugin marketplace add papaonlegs/wont-scale
@@ -19,34 +45,33 @@ same list.
 /first-audit
 ```
 
-`/first-audit` interviews you (stakes, architecture, team), detects your stack, and
-writes a prioritised plan. Then `/scale-audit` runs the checks and writes an
-evidence-first report. This repo is private — your git credentials for it must work
-(`gh auth setup-git` if the marketplace add fails).
+`/first-audit` interviews you and writes a prioritised plan; `/scale-audit` runs the
+checks and writes the report.
 
-**Any terminal** (no AI required):
+**Plain terminal wizard** (no AI required):
 
 ```
-git clone git@github.com:papaonlegs/wont-scale.git
-node wont-scale/scripts/first-audit.mjs /path/to/your-app
+git clone https://github.com/papaonlegs/wont-scale.git
+cd wont-scale && npm install          # builds the kit; Node 18+
+node dist/first-audit.js /path/to/your-app
 ```
 
 Ten questions, every one with a flag for scripting (`--yes`, `--json`,
 `--users=real --money=yes ...`). Writes `wont-scale.config.json` and a tailored
-`FIRST-AUDIT.md` into your repo. Add `--install-claude` to copy the skills and agents
-into your project's `.claude/`.
+`FIRST-AUDIT.md` into your repo.
 
-**Cursor / Copilot / Codex / Windsurf** — install the guardrails so the failures stop
-being reintroduced:
+**Guardrails for Cursor / Copilot / Codex / Windsurf** — install them so the failures
+stop being reintroduced:
 
-| Tool | Copy | To |
-|------|------|----|
-| Any agent (AGENTS.md standard) | `templates/AGENTS.snippet.md` | your `AGENTS.md` (append) |
-| Claude Code (manual) | same snippet | your `CLAUDE.md` (append) |
-| Cursor | `templates/cursor-rules/wont-scale.mdc` | `.cursor/rules/` |
-| GitHub Copilot | `templates/copilot-instructions.md` | `.github/copilot-instructions.md` (append) |
-| Windsurf / Devin | `templates/windsurf-rules.md` | `.windsurf/rules/` |
-| CI (PR gatekeeper) | `templates/ci/wont-scale-audit.yml` | `.github/workflows/` |
+| Tool | Command / copy | To |
+|------|----------------|----|
+| Any agent (AGENTS.md standard) | `templates/AGENTS.snippet.md` | your `AGENTS.md` / `CLAUDE.md` (append) |
+| Cursor | `node dist/assemble.js --guardrails --tool cursor` | `.cursor/rules/wont-scale.mdc` |
+| GitHub Copilot | `node dist/assemble.js --guardrails --tool copilot` | `.github/copilot-instructions.md` (append) |
+| Windsurf / Devin | `node dist/assemble.js --guardrails --tool windsurf` | `.windsurf/rules/wont-scale.md` |
+| CI (PR gatekeeper, optional) | `docs/ci/wont-scale-audit.yml` | `.github/workflows/` |
+
+The tool-specific variants are generated on demand from the ten modules rather than committed, so there is one source of truth to keep current.
 
 ## The ten reasons
 
@@ -78,16 +103,23 @@ answer them out loud.
 |-----------|-------|--------------|
 | `/scale-audit` skill | [skills/scale-audit](skills/scale-audit/SKILL.md) | Runs the checks, grades findings (Critical / High / Advisory), writes `WONT-SCALE-REPORT.md`, diffs against the last run. Scope it: `/scale-audit tier1`, `/scale-audit 4`. |
 | `/first-audit` skill | [skills/first-audit](skills/first-audit/SKILL.md) | The setup interview, inside Claude Code. |
-| `scale-guardrails` skill | [skills/scale-guardrails](skills/scale-guardrails/SKILL.md) | Auto-loads the rules when you're coding near one of the ten. |
+| Guardrail generator | [scripts/assemble.ts](scripts/assemble.ts) | One canonical snippet (`templates/AGENTS.snippet.md`) plus on-demand tool-specific variants — `node dist/assemble.js --guardrails --tool cursor`. All generated from the ten modules. |
 | `scale-auditor` agent | [agents/scale-auditor.md](agents/scale-auditor.md) | Read-only subagent for the full audit — delegate it and keep working. |
 | `scale-gatekeeper` agent | [agents/scale-gatekeeper.md](agents/scale-gatekeeper.md) | Reviews your working diff against the ten before you merge. PASS / WARN / BLOCK, evidence required. |
-| First-audit wizard | [scripts/first-audit.mjs](scripts/first-audit.mjs) | The interview for plain terminals. Zero dependencies, Node 18+. |
-| Guardrail templates | [templates/](templates/) | The same rules for AGENTS.md, Cursor, Copilot, Windsurf, and CI. Generated from the modules — edit there. |
+| Audit session | [scripts/audit-session.ts](scripts/audit-session.ts) | The curl-installed session: detect, disclose, drive the AI CLI, report, consented fix. `--no-drive` runs the fast mechanical report. |
+| First-audit wizard | [scripts/first-audit.ts](scripts/first-audit.ts) | The scoping interview for plain terminals. No runtime dependencies, Node 18+. |
+| Guardrail generator | [scripts/assemble.ts](scripts/assemble.ts) | Everything the audit says is generated from the ten modules — guardrail variants, drive prompts, the reason index. One source of truth; edit the modules, run `--all`. |
 
 Two principles run through all of it. **Evidence first:** no finding without file:line
 or query output, and a check that couldn't run is reported as "not verified", never as
 a pass. **Stakes first:** everything is tiered, so the report tells you what to fix
 before more users arrive — not everything that could theoretically be better.
+
+**Moved recently:** the tool-specific guardrail files (`templates/cursor-rules/`,
+`templates/copilot-instructions.md`, `templates/windsurf-rules.md`) and the
+`scale-guardrails` skill are no longer committed — they're generated on demand from the
+modules. Regenerate any one with `node dist/assemble.js --guardrails --tool <cursor|copilot|windsurf>`.
+The CI template moved to [`docs/ci/`](docs/ci/wont-scale-audit.yml).
 
 ## After the audit
 
@@ -102,5 +134,4 @@ what a [vibe code audit](https://papa.onle.gs) is for.
 
 ---
 
-MIT licence. The essays remain © [Farouk Umar](https://papa.onle.gs). This repo is
-shared privately; please don't republish it.
+MIT licence. The essays remain © [Farouk Umar](https://papa.onle.gs).
