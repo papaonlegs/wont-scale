@@ -12,3 +12,6 @@ node_modules/
 
 # Release build output
 dist/
+
+# Planning docs are private working artifacts, not part of the repo
+docs/plans/
