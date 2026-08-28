@@ -52,7 +52,8 @@ checks and writes the report.
 
 ```
 git clone https://github.com/papaonlegs/wont-scale.git
-node wont-scale/scripts/first-audit.mjs /path/to/your-app
+cd wont-scale && npm install          # builds the kit; Node 18+
+node dist/first-audit.js /path/to/your-app
 ```
 
 Ten questions, every one with a flag for scripting (`--yes`, `--json`,
@@ -65,9 +66,9 @@ stop being reintroduced:
 | Tool | Command / copy | To |
 |------|----------------|----|
 | Any agent (AGENTS.md standard) | `templates/AGENTS.snippet.md` | your `AGENTS.md` / `CLAUDE.md` (append) |
-| Cursor | `node scripts/assemble.mjs --guardrails --tool cursor` | `.cursor/rules/wont-scale.mdc` |
-| GitHub Copilot | `node scripts/assemble.mjs --guardrails --tool copilot` | `.github/copilot-instructions.md` (append) |
-| Windsurf / Devin | `node scripts/assemble.mjs --guardrails --tool windsurf` | `.windsurf/rules/wont-scale.md` |
+| Cursor | `node dist/assemble.js --guardrails --tool cursor` | `.cursor/rules/wont-scale.mdc` |
+| GitHub Copilot | `node dist/assemble.js --guardrails --tool copilot` | `.github/copilot-instructions.md` (append) |
+| Windsurf / Devin | `node dist/assemble.js --guardrails --tool windsurf` | `.windsurf/rules/wont-scale.md` |
 | CI (PR gatekeeper, optional) | `docs/ci/wont-scale-audit.yml` | `.github/workflows/` |
 
 The tool-specific variants are generated on demand from the ten modules rather than committed, so there is one source of truth to keep current.
@@ -102,12 +103,12 @@ answer them out loud.
 |-----------|-------|--------------|
 | `/scale-audit` skill | [skills/scale-audit](skills/scale-audit/SKILL.md) | Runs the checks, grades findings (Critical / High / Advisory), writes `WONT-SCALE-REPORT.md`, diffs against the last run. Scope it: `/scale-audit tier1`, `/scale-audit 4`. |
 | `/first-audit` skill | [skills/first-audit](skills/first-audit/SKILL.md) | The setup interview, inside Claude Code. |
-| Guardrail generator | [scripts/assemble.mjs](scripts/assemble.mjs) | One canonical snippet (`templates/AGENTS.snippet.md`) plus on-demand tool-specific variants — `node scripts/assemble.mjs --guardrails --tool cursor`. All generated from the ten modules. |
+| Guardrail generator | [scripts/assemble.ts](scripts/assemble.ts) | One canonical snippet (`templates/AGENTS.snippet.md`) plus on-demand tool-specific variants — `node dist/assemble.js --guardrails --tool cursor`. All generated from the ten modules. |
 | `scale-auditor` agent | [agents/scale-auditor.md](agents/scale-auditor.md) | Read-only subagent for the full audit — delegate it and keep working. |
 | `scale-gatekeeper` agent | [agents/scale-gatekeeper.md](agents/scale-gatekeeper.md) | Reviews your working diff against the ten before you merge. PASS / WARN / BLOCK, evidence required. |
-| Audit session | [scripts/audit-session.mjs](scripts/audit-session.mjs) | The curl-installed session: detect, disclose, drive the AI CLI, report, consented fix. `--no-drive` runs the fast mechanical report. |
-| First-audit wizard | [scripts/first-audit.mjs](scripts/first-audit.mjs) | The scoping interview for plain terminals. Zero dependencies, Node 18+. |
-| Guardrail generator | [scripts/assemble.mjs](scripts/assemble.mjs) | Everything the audit says is generated from the ten modules — guardrail variants, drive prompts, the reason index. One source of truth; edit the modules, run `--all`. |
+| Audit session | [scripts/audit-session.ts](scripts/audit-session.ts) | The curl-installed session: detect, disclose, drive the AI CLI, report, consented fix. `--no-drive` runs the fast mechanical report. |
+| First-audit wizard | [scripts/first-audit.ts](scripts/first-audit.ts) | The scoping interview for plain terminals. No runtime dependencies, Node 18+. |
+| Guardrail generator | [scripts/assemble.ts](scripts/assemble.ts) | Everything the audit says is generated from the ten modules — guardrail variants, drive prompts, the reason index. One source of truth; edit the modules, run `--all`. |
 
 Two principles run through all of it. **Evidence first:** no finding without file:line
 or query output, and a check that couldn't run is reported as "not verified", never as
@@ -117,7 +118,7 @@ before more users arrive — not everything that could theoretically be better.
 **Moved recently:** the tool-specific guardrail files (`templates/cursor-rules/`,
 `templates/copilot-instructions.md`, `templates/windsurf-rules.md`) and the
 `scale-guardrails` skill are no longer committed — they're generated on demand from the
-modules. Regenerate any one with `node scripts/assemble.mjs --guardrails --tool <cursor|copilot|windsurf>`.
+modules. Regenerate any one with `node dist/assemble.js --guardrails --tool <cursor|copilot|windsurf>`.
 The CI template moved to [`docs/ci/`](docs/ci/wont-scale-audit.yml).
 
 ## After the audit

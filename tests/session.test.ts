@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { resolveTarget, findSecretFiles, disclosure, runAuditLoop, readDriveFindings } from '../scripts/lib/session.mjs';
+import { resolveTarget, findSecretFiles, disclosure, runAuditLoop, readDriveFindings } from '../scripts/lib/session.ts';
 import { writeFileSync as wf } from 'node:fs';
-import { Session } from '../scripts/lib/state.mjs';
-import { makeTempRepo, write, initGit, cleanup } from './helpers/fixtures.mjs';
+import { Session } from '../scripts/lib/state.ts';
+import type { Finding } from '../scripts/lib/findings-schema.ts';
+import { makeTempRepo, write, initGit, cleanup } from './helpers/fixtures.ts';
 import { realpathSync } from 'node:fs';
 
-const toClean = [];
+const toClean: Array<string | (() => void)> = [];
 after(() => toClean.forEach((c) => (typeof c === 'function' ? c() : cleanup(c))));
-const repo = () => { const d = makeTempRepo('wont-scale-session-'); toClean.push(d); return d; };
+const repo = (): string => { const d = makeTempRepo('wont-scale-session-'); toClean.push(d); return d; };
 
 test('resolveTarget refuses home, root, and marker-less dirs; accepts a project', () => {
   assert.throws(() => resolveTarget(homedir()), /home directory/);
@@ -47,11 +48,11 @@ test('the audit loop drives ten modules and reconciles against the mechanical fl
   write(r, 'src/webhook.js', 'stripe.webhooks.constructEvent(req); charge();\n'); // idempotency defect
   initGit(r);
   // a drive that lies: reports reason 6 clean
-  const driveModule = async (n) => ({ reason: n, slug: 'x', status: n === 6 ? 'clean' : 'not-verified', severity: 'high', evidence: [], ...(n === 6 ? {} : { not_verified_reason: 'stub' }) });
+  const driveModule = async (n: number): Promise<Finding> => ({ reason: n, slug: 'x', status: n === 6 ? 'clean' : 'not-verified', severity: 'high', evidence: [], ...(n === 6 ? {} : { not_verified_reason: 'stub' }) });
   const findings = await runAuditLoop({ root: r, driveModule });
   const six = findings.find((f) => f.reason === 6);
-  assert.equal(six.status, 'not-verified', 'the lie is caught by the mechanical cross-check');
-  assert.match(six.not_verified_reason, /mechanical check fired/);
+  assert.equal(six!.status, 'not-verified', 'the lie is caught by the mechanical cross-check');
+  assert.match(six!.not_verified_reason!, /mechanical check fired/);
 });
 
 test('the audit loop records completion and resumes without re-driving', async () => {
@@ -62,7 +63,7 @@ test('the audit loop records completion and resumes without re-driving', async (
   s.open();
   toClean.push(() => s.close());
   let drives = 0;
-  const driveModule = async (n) => { drives++; return { reason: n, slug: 'x', status: 'clean', severity: 'high', evidence: [] }; };
+  const driveModule = async (n: number): Promise<Finding> => { drives++; return { reason: n, slug: 'x', status: 'clean', severity: 'high', evidence: [] }; };
   await runAuditLoop({ root: realpathSync(r), driveModule, session: s });
   assert.equal(drives, 10);
   // resume: a second loop re-uses recorded findings
@@ -90,7 +91,7 @@ test('a live co-owner makes a second session refuse; a stale one is reclaimable'
 
 test('readDriveFindings reads back and validates the drive output, else falls back', () => {
   const dir = repo();
-  const fallback = { reason: 4, slug: 'authorisation', status: 'not-verified', severity: 'critical', evidence: [], not_verified_reason: 'mechanical could not check' };
+  const fallback: Finding = { reason: 4, slug: 'authorisation', status: 'not-verified', severity: 'critical', evidence: [], not_verified_reason: 'mechanical could not check' };
   const out = join(dir, 'findings-4.json');
   // valid drive finding -> used
   wf(out, JSON.stringify({ reason: 4, slug: 'authorisation', status: 'finding', severity: 'critical', evidence: ['no RLS on invoices'] }));

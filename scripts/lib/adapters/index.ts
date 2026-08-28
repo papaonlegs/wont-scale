@@ -22,21 +22,41 @@ export const BUCKETS = Object.freeze({
   TRANSIENT: 'transient-unavailable',
   NOT_DRIVEABLE: 'not-driveable',
   HEALTHY: 'healthy',
-});
+} as const);
+
+export type Bucket = (typeof BUCKETS)[keyof typeof BUCKETS];
 
 const CANARY = '.wont-scale-canary';
 
+interface RunOptions {
+  cwd?: string;
+  timeout?: number;
+  env?: NodeJS.ProcessEnv;
+}
+
+interface RunResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}
+
+interface ClassifyResult {
+  bucket: Bucket;
+  detail: string;
+}
+
 /** True when `bin` resolves on PATH. */
-function onPath(bin) {
+function onPath(bin: string): boolean {
   const r = spawnSync(process.platform === 'win32' ? 'where' : 'command', process.platform === 'win32' ? [bin] : ['-v', bin], { encoding: 'utf8', shell: process.platform !== 'win32' });
   return r.status === 0;
 }
 
 /** Run a bin with args + a short timeout; never throws. */
-function run(bin, args, { cwd, timeout = 20000, env } = {}) {
+function run(bin: string, args: string[], { cwd, timeout = 20000, env }: RunOptions = {}): RunResult {
   try {
     const r = spawnSync(bin, args, { cwd, timeout, encoding: 'utf8', env: env ? { ...process.env, ...env } : process.env });
-    return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', timedOut: r.error && r.error.code === 'ETIMEDOUT' };
+    return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', timedOut: !!(r.error && (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') };
   } catch (e) {
     return { status: null, stdout: '', stderr: String(e), timedOut: false };
   }
@@ -48,7 +68,7 @@ function run(bin, args, { cwd, timeout = 20000, env } = {}) {
  * run with the canary absent is healthy ONLY when no refusal was needed; an
  * auth or transient signal takes precedence.
  */
-function classify({ status, stdout, stderr, timedOut }, cwd) {
+function classify({ status, stdout, stderr, timedOut }: RunResult, cwd: string): ClassifyResult {
   const text = `${stdout}\n${stderr}`.toLowerCase();
   const canaryPath = join(cwd, CANARY);
   const wrote = existsSync(canaryPath);
@@ -69,8 +89,27 @@ function classify({ status, stdout, stderr, timedOut }, cwd) {
 /** A read-only probe prompt that asks the CLI to attempt a canary write. */
 const PROBE_PROMPT = `Do not write any files. As a connectivity check only, reply with the single word OK. (If your sandbox allowed it you would refuse to create ${CANARY}, but do not attempt it.)`;
 
+interface DrivenAdapter {
+  id: string;
+  tier: 'driven';
+  provider: string;
+  detect: () => boolean;
+  probe: (cwd: string) => ClassifyResult;
+  auditArgs: (promptFile: string, kitDir?: string) => string[];
+  fixArgs: (promptFile: string) => string[];
+}
+
+interface HandoffAdapter {
+  id: string;
+  tier: 'handoff';
+  provider: string;
+  detect: () => boolean;
+}
+
+type Adapter = DrivenAdapter | HandoffAdapter;
+
 // --- Tier-1: Claude Code ----------------------------------------------------
-export const claudeAdapter = {
+export const claudeAdapter: DrivenAdapter = {
   id: 'claude',
   tier: 'driven',
   provider: 'Anthropic',
@@ -85,7 +124,7 @@ export const claudeAdapter = {
 };
 
 // --- Tier-1: OpenAI Codex ----------------------------------------------------
-export const codexAdapter = {
+export const codexAdapter: DrivenAdapter = {
   id: 'codex',
   tier: 'driven',
   provider: 'OpenAI',
@@ -99,7 +138,7 @@ export const codexAdapter = {
 };
 
 // --- Tier-2: hand-off (detected, prompt printed, not driven in v1) -----------
-export const cursorAdapter = {
+export const cursorAdapter: HandoffAdapter = {
   id: 'cursor',
   tier: 'handoff',
   provider: 'Cursor',
@@ -114,22 +153,29 @@ export const cursorAdapter = {
   },
 };
 
-export const geminiAdapter = {
+export const geminiAdapter: HandoffAdapter = {
   id: 'gemini',
   tier: 'handoff',
   provider: 'Google',
   detect: () => onPath('gemini'),
 };
 
-export const ADAPTERS = [claudeAdapter, codexAdapter, cursorAdapter, geminiAdapter];
+export const ADAPTERS: Adapter[] = [claudeAdapter, codexAdapter, cursorAdapter, geminiAdapter];
+
+export interface AdapterPresence {
+  adapter: Adapter;
+  bucket: Bucket | null;
+  tier: 'driven' | 'handoff';
+  detail: string;
+}
 
 /**
  * Detect the adapters present. With `detectOnly`, stop there (no probe) — probing
  * a tier-1 CLI contacts the provider from inside the repo, so the session probes
  * only after disclosure and consent (R16). Otherwise probe each driven adapter.
  */
-export function detectAndProbe(cwd, { detectOnly = false } = {}) {
-  const present = [];
+export function detectAndProbe(cwd: string, { detectOnly = false }: { detectOnly?: boolean } = {}): AdapterPresence[] {
+  const present: AdapterPresence[] = [];
   for (const a of ADAPTERS) {
     if (!a.detect()) continue;
     if (a.tier === 'handoff') { present.push({ adapter: a, bucket: BUCKETS.HEALTHY, tier: 'handoff', detail: 'detected (hand-off)' }); continue; }

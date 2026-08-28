@@ -21,17 +21,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"   # runs the TypeScript sources directly via type stripping
+      - run: npm ci
       - name: Verify the tree is consistent
         run: |
-          node --test 'tests/**/*.test.mjs'
-          node scripts/assemble.mjs --all
+          npm run typecheck
+          node --test 'tests/**/*.test.ts'
+          node scripts/assemble.ts --all
           git diff --exit-code   # committed aggregates must match the modules
       - name: Build release assets
-        run: node scripts/release.mjs "${GITHUB_REF_NAME}"
+        run: node scripts/release.ts "${GITHUB_REF_NAME}"
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/install.sh
-            dist/wont-scale-${{ github.ref_name }}.tar.gz
+            release/install.sh
+            release/wont-scale-${{ github.ref_name }}.tar.gz

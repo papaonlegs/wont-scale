@@ -2,12 +2,12 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { classify, BUCKETS, CANARY, ADAPTERS, claudeAdapter, codexAdapter } from '../scripts/lib/adapters/index.mjs';
-import { makeTempRepo, cleanup } from './helpers/fixtures.mjs';
+import { classify, BUCKETS, CANARY, ADAPTERS, claudeAdapter, codexAdapter } from '../scripts/lib/adapters/index.ts';
+import { makeTempRepo, cleanup } from './helpers/fixtures.ts';
 
-const toClean = [];
+const toClean: string[] = [];
 after(() => toClean.forEach(cleanup));
-const tmp = () => { const d = makeTempRepo('wont-scale-adapter-'); toClean.push(d); return d; };
+const tmp = (): string => { const d = makeTempRepo('wont-scale-adapter-'); toClean.push(d); return d; };
 
 test('a clean read-only run with no canary is healthy', () => {
   const dir = tmp();

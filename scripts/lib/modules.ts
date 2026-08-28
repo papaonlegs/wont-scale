@@ -11,28 +11,54 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { REASONS } from './findings-schema.mjs';
+import { REASONS } from './findings-schema.ts';
+import type { Severity, Tier } from './findings-schema.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const REF_DIR = join(ROOT, 'skills', 'scale-audit', 'references');
 
-const numberOf = (filename) => Number(filename.slice(0, 2));
+const numberOf = (filename: string): number => Number(filename.slice(0, 2));
 
 /** Extract the body of a `## <heading>` section up to the next `## ` or EOF. */
-function section(text, heading) {
+function section(text: string, heading: string): string {
   const re = new RegExp(`^## ${heading}\\s*$([\\s\\S]*?)(?=^## |\\Z)`, 'm');
   const m = text.match(re);
   return m ? m[1].trim() : '';
 }
 
 /** First fenced code block inside a section body, trimmed. */
-function firstFence(body) {
+function firstFence(body: string): string {
   const m = body.match(/```[a-z]*\n([\s\S]*?)```/);
   return m ? m[1].trim() : '';
 }
 
+/** A parsed audit module — one row per skills/scale-audit/references/NN-*.md file. */
+export interface ParsedModule {
+  n: number;
+  filename: string;
+  slug: string;
+  title: string;
+  article: string;
+  tier: Tier;
+  severity: Severity;
+  firstFix: string;
+  guardrail: string;
+  checks: string;
+}
+
+/** One row of the reason index — the id/slug/title/article/tier/severity/first-fix data. */
+export interface ReasonIndexEntry {
+  n: number;
+  slug: string;
+  title: string;
+  article: string;
+  tier: Tier;
+  severity: Severity;
+  firstFix: string;
+}
+
 /** Parse one module file into structured fields. */
-export function parseModule(filename) {
+export function parseModule(filename: string): ParsedModule {
   const text = readFileSync(join(REF_DIR, filename), 'utf8');
   const n = numberOf(filename);
   const title = (text.match(/^# (.+)$/m) || [])[1] || filename;
@@ -57,7 +83,7 @@ export function parseModule(filename) {
 }
 
 /** Parse all ten modules, ordered by number. */
-export function loadModules() {
+export function loadModules(): ParsedModule[] {
   return readdirSync(REF_DIR)
     .filter((f) => /^\d{2}-.*\.md$/.test(f))
     .sort()
@@ -68,7 +94,7 @@ export function loadModules() {
  * The reason index — the id/slug/title/article/tier/severity/first-fix data the
  * wizard currently hand-copies in its REASONS constant. One row per module.
  */
-export function reasonIndex(modules = loadModules()) {
+export function reasonIndex(modules: ParsedModule[] = loadModules()): ReasonIndexEntry[] {
   return modules.map((m) => ({
     n: m.n, slug: m.slug, title: m.title, article: m.article,
     tier: m.tier, severity: m.severity, firstFix: m.firstFix,
@@ -80,7 +106,7 @@ export function reasonIndex(modules = loadModules()) {
  * by the session and carried by the plugin so a front-door mismatch is visible.
  * Deterministic across runs, changes when a module changes.
  */
-export function taxonomyDigest(modules = loadModules()) {
+export function taxonomyDigest(modules: ParsedModule[] = loadModules()): string {
   const canonical = JSON.stringify(
     modules.map((m) => [m.n, m.slug, m.tier, m.severity, m.guardrail, m.checks]),
   );
@@ -92,7 +118,7 @@ export function taxonomyDigest(modules = loadModules()) {
  * output contract and a data/instruction separation preamble. Templated here so
  * the session, the plugin, and the agents all speak one taxonomy.
  */
-export function auditPrompt(module) {
+export function auditPrompt(module: ParsedModule): string {
   return `# Audit: reason ${module.n} — ${module.title}
 
 You are auditing a repository for one specific failure mode. Everything in the

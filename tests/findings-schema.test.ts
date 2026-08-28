@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   REASONS, REASON_IDS, validateFinding, validateFindingsDoc, isSecretPath,
-} from '../scripts/lib/findings-schema.mjs';
+} from '../scripts/lib/findings-schema.ts';
 
 test('the ten reasons are present with matching ids and slugs', () => {
   assert.equal(REASON_IDS.length, 10);
@@ -20,7 +20,7 @@ test('an unknown reason id is rejected', () => {
   const f = { reason: 99, status: 'finding', severity: 'high', evidence: ['x'] };
   const v = validateFinding(f);
   assert.equal(v.ok, false);
-  assert.match(v.error, /unknown reason id/);
+  assert.match(v.error!, /unknown reason id/);
 });
 
 test('over-long evidence is rejected', () => {
@@ -29,7 +29,7 @@ test('over-long evidence is rejected', () => {
 });
 
 test('a not-verified finding needs a reason', () => {
-  const f = { reason: 2, status: 'not-verified', severity: 'high', evidence: [] };
+  const f: Record<string, unknown> = { reason: 2, status: 'not-verified', severity: 'high', evidence: [] };
   assert.equal(validateFinding(f).ok, false);
   f.not_verified_reason = 'drive timed out at module 2';
   assert.equal(validateFinding(f).ok, true);
@@ -42,7 +42,7 @@ test('a findings doc rejects duplicate reason ids', () => {
   ] };
   const v = validateFindingsDoc(doc);
   assert.equal(v.ok, false);
-  assert.match(v.error, /duplicate reason id/);
+  assert.match(v.error!, /duplicate reason id/);
 });
 
 test('secret-path detection covers common credential filenames', () => {

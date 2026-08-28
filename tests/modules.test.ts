@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   loadModules, parseModule, reasonIndex, taxonomyDigest, auditPrompt,
-} from '../scripts/lib/modules.mjs';
+} from '../scripts/lib/modules.ts';
 
 test('all ten modules parse with the expected fields', () => {
   const mods = loadModules();
@@ -38,9 +38,9 @@ test('reason index carries the wizard-hand-copied fields', () => {
   const idx = reasonIndex();
   assert.equal(idx.length, 10);
   const r4 = idx.find((r) => r.n === 4);
-  assert.equal(r4.slug, 'authorisation');
-  assert.ok(r4.firstFix.length > 0);
-  assert.ok(r4.article.length > 0);
+  assert.equal(r4!.slug, 'authorisation');
+  assert.ok(r4!.firstFix.length > 0);
+  assert.ok(r4!.article.length > 0);
 });
 
 test('the taxonomy digest is stable across runs and 16 hex chars', () => {

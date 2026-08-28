@@ -10,8 +10,11 @@ node_modules/
 # Compound Engineering local scratch
 .context/compound-engineering/
 
-# Release build output
+# Compiled TypeScript output (built by `npm run build`; shipped in the release tarball)
 dist/
+
+# Release artifacts (tarball + stamped installer, produced by scripts/release.ts)
+release/
 
 # Planning docs are private working artifacts, not part of the repo
 docs/plans/

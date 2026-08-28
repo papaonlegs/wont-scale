@@ -16,17 +16,27 @@
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { REASON_IDS, finding } from './findings-schema.mjs';
+import { REASON_IDS, finding } from './findings-schema.ts';
+import type { Finding } from './findings-schema.ts';
 
 const CODE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|py|rb|go|java|php)$/;
 const SKIP_DIR = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'vendor', '__pycache__', 'coverage']);
 
+/** One pre-walked source file: its path relative to the audited root, and its text. */
+interface CodeFile {
+  rel: string;
+  text: string;
+}
+
+/** A mechanical reason detector: given the pre-walked files (and root for a few), returns one finding. */
+type Detector = (files: CodeFile[], root: string) => Finding;
+
 /** Walk a repo once into { rel, text } records for each code file, bounded. */
-function collectCodeFiles(root, { maxFiles = 4000 } = {}) {
-  const files = [];
-  const stack = [root];
+function collectCodeFiles(root: string, { maxFiles = 4000 }: { maxFiles?: number } = {}): CodeFile[] {
+  const files: CodeFile[] = [];
+  const stack: string[] = [root];
   while (stack.length && files.length < maxFiles) {
-    const dir = stack.pop();
+    const dir = stack.pop() as string;
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
     for (const e of entries) {
@@ -44,8 +54,8 @@ function collectCodeFiles(root, { maxFiles = 4000 } = {}) {
 }
 
 /** Collect regex hits across the pre-walked file list as `rel:line`, capped. */
-function grepFiles(files, re, { cap = 5 } = {}) {
-  const hits = [];
+function grepFiles(files: CodeFile[], re: RegExp, { cap = 5 }: { cap?: number } = {}): string[] {
+  const hits: string[] = [];
   for (const f of files) {
     const lines = f.text.split('\n');
     for (let i = 0; i < lines.length && hits.length < cap; i++) {
@@ -61,7 +71,7 @@ function grepFiles(files, re, { cap = 5 } = {}) {
  * `finding`, an empty scan means `clean`, and a reason a static pass cannot
  * settle (RLS enforcement, real query counts) returns `not-verified` with why.
  */
-const DETECTORS = {
+const DETECTORS: Record<number, Detector> = {
   3(files) { // authentication — hardcoded secrets, non-expiring tokens
     const secrets = grepFiles(files, /(jwt|token|secret|apikey|api_key)\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]/i);
     if (secrets.length) return finding(3, 'finding', secrets);
@@ -102,29 +112,32 @@ const DETECTORS = {
   10(files, root) { // bus factor — README setup path, any tests
     const hasReadme = existsSync(join(root, 'README.md'));
     const hasTests = files.some((f) => /\.(test|spec)\./.test(f.rel) || f.rel.includes('__tests__'));
-    const missing = [];
+    const missing: string[] = [];
     if (!hasReadme) missing.push('no README.md');
     if (!hasTests) missing.push('no test files found');
     return missing.length ? finding(10, 'finding', missing) : finding(10, 'clean', []);
   },
 };
 
-function readPkg(root) {
+function readPkg(root: string): { deps: Record<string, string> } | null {
   try {
-    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
     return { deps: { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) } };
   } catch { return null; }
 }
 
 /** Reasons with no static detector — always not-verified in the mechanical path. */
-const STATIC_ONLY_NOT_VERIFIED = {
+const STATIC_ONLY_NOT_VERIFIED: Record<number, string> = {
   1: 'counting overlapping data models needs schema reading; run the AI audit',
   2: 'real query counts need a running app and production-shaped data; run the AI audit',
   7: 'single-box state assumptions need reading the deploy topology; run the AI audit',
 };
 
 /** Run the mechanical audit over a target repo, one finding per reason. */
-export function runMechanical(root) {
+export function runMechanical(root: string): Finding[] {
   const files = collectCodeFiles(root); // one walk, shared across every detector
   return REASON_IDS.map((n) =>
     DETECTORS[n]
@@ -138,7 +151,7 @@ export function runMechanical(root) {
  * problem to not-verified. Schema validation constrains finding shape; this is
  * what stops a talked-into-clean agent from burying a real defect.
  */
-export function reconcile(driveFindings, mechanicalFindings) {
+export function reconcile(driveFindings: Finding[], mechanicalFindings: Finding[]): Finding[] {
   const mech = new Map(mechanicalFindings.map((f) => [f.reason, f]));
   return driveFindings.map((d) => {
     const m = mech.get(d.reason);

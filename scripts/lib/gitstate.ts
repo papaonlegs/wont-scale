@@ -14,10 +14,40 @@ import { join, relative, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
-/** Run git in `root`; { ok, out } — never throws. Shared with fix.mjs. */
-export function git(root, args) {
+export interface GitResult {
+  ok: boolean;
+  out: string;
+}
+
+export type SafeStateName = 'no-git' | 'mid-merge' | 'unborn-head' | 'committed-dirty' | 'clean';
+
+export interface SafeState {
+  state: SafeStateName;
+  canFix: boolean;
+  detail: string;
+  headSha?: string;
+}
+
+export interface Manifest {
+  map: Map<string, string>;
+  escapes: string[];
+}
+
+export interface ContainmentVerdict {
+  changed: string[];
+  gitWrites: string[];
+  newEscapes: string[];
+  unexpected: string[];
+  contained: boolean;
+}
+
+/** Run git in `root`; { ok, out } — never throws. Shared with fix.ts. */
+export function git(root: string, args: string[]): GitResult {
   try { return { ok: true, out: execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim() }; }
-  catch (e) { return { ok: false, out: (e.stdout || '') + (e.stderr || '') }; }
+  catch (e) {
+    const err = e as { stdout?: string; stderr?: string };
+    return { ok: false, out: (err.stdout || '') + (err.stderr || '') };
+  }
 }
 
 /**
@@ -25,7 +55,7 @@ export function git(root, args) {
  * Only 'clean' and 'committed-dirty' allow a fix; no-git, unborn-HEAD, and
  * mid-merge stay report-only with the exact command to change that.
  */
-export function safeState(root) {
+export function safeState(root: string): SafeState {
   const gitDir = git(root, ['rev-parse', '--git-dir']);
   if (!gitDir.ok) {
     return { state: 'no-git', canFix: false, detail: 'not a git repository — run `git init && git add -A && git commit -m "baseline"` first' };
@@ -33,7 +63,7 @@ export function safeState(root) {
   // Resolve the real git-dir path (a linked worktree's .git is a file, not a dir),
   // so mid-merge/rebase detection works outside a classic .git directory. The
   // returned path is root-relative unless already absolute, so anchor it to root.
-  const gp = (name) => {
+  const gp = (name: string): string => {
     const p = git(root, ['rev-parse', '--git-path', name]).out;
     return isAbsolute(p) ? p : join(root, p);
   };
@@ -56,13 +86,13 @@ const SKIP_WALK = new Set(['node_modules']);
  * to a content hash. A symlink whose real target escapes `root` is recorded as
  * an escape rather than followed.
  */
-export function manifest(root) {
+export function manifest(root: string): Manifest {
   const realRoot = realpathSync(root);
-  const map = new Map();
-  const escapes = [];
-  const stack = [realRoot];
+  const map = new Map<string, string>();
+  const escapes: string[] = [];
+  const stack: string[] = [realRoot];
   while (stack.length) {
-    const dir = stack.pop();
+    const dir = stack.pop() as string;
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
     for (const e of entries) {
@@ -71,7 +101,7 @@ export function manifest(root) {
       let ls;
       try { ls = lstatSync(p); } catch { continue; }
       if (ls.isSymbolicLink()) {
-        let target;
+        let target: string;
         try { target = realpathSync(p); } catch { map.set(relative(realRoot, p), 'broken-symlink'); continue; }
         if (relative(realRoot, target).startsWith('..')) { escapes.push(relative(realRoot, p)); continue; }
         map.set(relative(realRoot, p), `symlink:${relative(realRoot, target)}`);
@@ -92,8 +122,8 @@ export function manifest(root) {
  * whether any land under .git/ or a hook directory, whether any symlink now
  * escapes the target, and whether only the shown diff's expected paths moved.
  */
-export function containmentDiff(before, after, { expected = [] } = {}) {
-  const changed = [];
+export function containmentDiff(before: Manifest, after: Manifest, { expected = [] }: { expected?: string[] } = {}): ContainmentVerdict {
+  const changed: string[] = [];
   for (const [rel, hash] of after.map) {
     if (before.map.get(rel) !== hash) changed.push(rel);
   }

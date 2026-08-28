@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
   guardrails, replaceMarked, fallbackChecklist, checklistTiers,
   reasonIndexJson, auditPromptFor, fixPrompt, BEGIN, END,
-} from '../scripts/lib/assemble.mjs';
+} from '../scripts/lib/assemble.ts';
+import type { Finding } from '../scripts/lib/findings-schema.ts';
 
 test('guardrails render each tool variant with all ten rules', () => {
   for (const tool of [undefined, 'agents', 'cursor', 'copilot', 'windsurf']) {
@@ -61,7 +62,7 @@ test('audit prompt is per-reason and does not leak other modules', () => {
 });
 
 test('fix prompt templates from validated fields with negative constraints', () => {
-  const finding = { reason: 6, evidence: ['no unique constraint on stripe_event_id'] };
+  const finding: Finding = { reason: 6, slug: 'idempotency', status: 'finding', severity: 'high', evidence: ['no unique constraint on stripe_event_id'] };
   const p = fixPrompt(finding);
   assert.match(p, /reason 6/);
   assert.match(p, /no unique constraint on stripe_event_id/);

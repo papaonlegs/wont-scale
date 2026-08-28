@@ -7,8 +7,53 @@
  * manifest, keep/revert — is verifiable without a live model.
  */
 
-import { REASONS, severityRank } from './findings-schema.mjs';
-import { safeState, manifest, containmentDiff, git } from './gitstate.mjs';
+import { REASONS, severityRank } from './findings-schema.ts';
+import type { Finding } from './findings-schema.ts';
+import { safeState, manifest, containmentDiff, git } from './gitstate.ts';
+
+export interface SkippedFinding {
+  reason: number;
+  title: string;
+}
+
+export interface TractableSelection {
+  finding: Finding | null;
+  skipped: SkippedFinding | null;
+}
+
+export interface RevertMarker {
+  sha: string;
+  command: string;
+}
+
+export interface IsolatedWip {
+  sha: string;
+  restoreCommand: string;
+}
+
+export interface FixResult {
+  applied: boolean;
+  contained?: boolean;
+  reverted?: boolean;
+  changed?: string[];
+  diff?: string;
+  revert?: RevertMarker;
+  isolatedWip?: IsolatedWip | null;
+  refusedReason?: string;
+  state?: string;
+  breach?: { gitWrites: string[]; escapes: string[]; unexpected: string[]; committed: boolean };
+}
+
+export type DriveFn = (prompt: string, cwd: string) => void | Promise<void>;
+export type CanaryProbeFn = (cwd: string) => boolean | Promise<boolean>;
+
+export interface ApplyFixArgs {
+  root: string;
+  finding: Finding;
+  prompt: string;
+  drive: DriveFn;
+  canaryProbe?: CanaryProbeFn | null;
+}
 
 // Reasons whose module first-fix is additive and bounded — a real one-step fix.
 // Structural rewrites (authz/trust-boundary/data-models/statelessness) are not
@@ -20,7 +65,7 @@ const TRACTABLE = new Set([3, 6, 8, 9, 10]);
  * one-step fix. Returns { finding, skipped } — skipped names a worse finding
  * passed over, so the session can say plainly why.
  */
-export function selectTractable(findings) {
+export function selectTractable(findings: Finding[]): TractableSelection {
   const open = findings.filter((f) => f.status === 'finding')
     .sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
   const finding = open.find((f) => TRACTABLE.has(f.reason)) || null;
@@ -39,7 +84,7 @@ export function selectTractable(findings) {
  * Returns a structured result the session renders and the report records:
  * { applied, contained, reverted, changed, revert, refusedReason }.
  */
-export async function applyFix({ root, finding, prompt, drive, canaryProbe = null }) {
+export async function applyFix({ root, finding, prompt, drive, canaryProbe = null }: ApplyFixArgs): Promise<FixResult> {
   const state = safeState(root);
   if (!state.canFix) {
     return { applied: false, refusedReason: state.detail, state: state.state };
@@ -57,7 +102,7 @@ export async function applyFix({ root, finding, prompt, drive, canaryProbe = nul
   // their work in a commit first (offered, not a silent stash) so the fix lands
   // on a clean base and reverting removes only the fix, leaving their work intact.
   let baseSha = originalSha;
-  let isolatedWip = null;
+  let isolatedWip: IsolatedWip | null = null;
   if (state.state === 'committed-dirty') {
     git(root, ['add', '-A']);
     const c = git(root, ['commit', '-m', 'wont-scale: your work in progress, isolated before the audit fix']);
@@ -80,10 +125,10 @@ export async function applyFix({ root, finding, prompt, drive, canaryProbe = nul
 
   // HEAD must equal baseSha — the agent must not have committed on top.
   const postSha = git(root, ['rev-parse', 'HEAD']).out;
-  const committed = baseSha && postSha && baseSha !== postSha;
+  const committed = Boolean(baseSha && postSha && baseSha !== postSha);
 
   // Revert restores to baseSha (the reader's work preserved when it was isolated).
-  const revert = { sha: baseSha, command: `git -C . reset --hard ${baseSha} && git -C . clean -fd` };
+  const revert: RevertMarker = { sha: baseSha, command: `git -C . reset --hard ${baseSha} && git -C . clean -fd` };
 
   if (!diff.contained || committed) {
     if (baseSha) { git(root, ['reset', '--hard', baseSha]); git(root, ['clean', '-fd']); }
@@ -108,7 +153,7 @@ export async function applyFix({ root, finding, prompt, drive, canaryProbe = nul
 }
 
 /** Revert an applied fix from a persisted marker (used on abort/keep=no). */
-export function revertTo(root, sha) {
+export function revertTo(root: string, sha: string): { ok: boolean; detail: string } {
   if (!/^[0-9a-f]{7,40}$/.test(sha)) return { ok: false, detail: 'invalid sha' };
   const r = git(root, ['reset', '--hard', sha]);
   git(root, ['clean', '-fd']);

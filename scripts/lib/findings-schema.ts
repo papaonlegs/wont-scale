@@ -8,13 +8,39 @@
  * than the last one to define it.
  */
 
+export type Severity = 'critical' | 'high' | 'advisory';
+export type Status = 'finding' | 'not-verified' | 'clean';
+export type Tier = 'T1' | 'T2';
+
+export interface Reason {
+  slug: string;
+  tier: Tier;
+  severity: Severity;
+  title: string;
+  article: string;
+}
+
+export interface Finding {
+  reason: number;
+  slug: string;
+  status: Status;
+  severity: Severity;
+  evidence: string[];
+  not_verified_reason?: string;
+}
+
+export interface ValidationResult {
+  ok: boolean;
+  error?: string;
+}
+
 // The ten reasons, keyed by their canonical id. Slugs and article URLs match
 // skills/scale-audit/references/NN-<slug>.md and the published series. Severity
 // is the reconciled field (KTD7): a single "how bad" per reason that U5 and U7
 // both read, instead of each deriving its own from the module Tier or the
 // wizard's KILL_ORDER.
 const SERIES = 'https://papa.onle.gs/writing';
-export const REASONS = Object.freeze({
+export const REASONS: Readonly<Record<number, Reason>> = Object.freeze({
   1: { slug: 'data-models', tier: 'T2', severity: 'high', title: 'You have six data models and you think you have one', article: `${SERIES}/you-have-six-data-models.html` },
   2: { slug: 'query-performance', tier: 'T2', severity: 'high', title: '40ms locally, 40 seconds in production', article: `${SERIES}/40ms-locally-40-seconds-in-production.html` },
   3: { slug: 'authentication', tier: 'T1', severity: 'critical', title: 'The login page is a prop', article: `${SERIES}/the-login-page-is-a-prop.html` },
@@ -27,33 +53,34 @@ export const REASONS = Object.freeze({
   10: { slug: 'bus-factor', tier: 'T1', severity: 'high', title: "The bus factor isn't one, it's zero", article: `${SERIES}/the-bus-factor-is-zero.html` },
 });
 
-export const REASON_IDS = Object.freeze(Object.keys(REASONS).map(Number));
-export const SEVERITIES = Object.freeze(['critical', 'high', 'advisory']);
-export const STATUSES = Object.freeze(['finding', 'not-verified', 'clean']);
+export const REASON_IDS: readonly number[] = Object.freeze(Object.keys(REASONS).map(Number));
+export const SEVERITIES: readonly Severity[] = Object.freeze(['critical', 'high', 'advisory']);
+export const STATUSES: readonly Status[] = Object.freeze(['finding', 'not-verified', 'clean']);
 
 /** Ordinal rank of a severity for sorting — the one source of the ordering. */
-export const severityRank = (s) => SEVERITIES.indexOf(s);
+export const severityRank = (s: Severity): number => SEVERITIES.indexOf(s);
 
 /**
  * Build a finding for a reason from its canonical slug and severity. The single
  * builder used by the mechanical path and the session, so the shape (and the
  * conditional not_verified_reason) lives in one place.
  */
-export function finding(reason, status, evidence = [], notVerifiedReason = null) {
+export function finding(reason: number, status: Status, evidence: string[] = [], notVerifiedReason: string | null = null): Finding {
+  const r = REASONS[reason];
   return {
     reason,
-    slug: REASONS[reason].slug,
+    slug: r.slug,
     status,
-    severity: REASONS[reason].severity,
+    severity: r.severity,
     evidence,
-    ...(status === 'not-verified' ? { not_verified_reason: notVerifiedReason } : {}),
+    ...(status === 'not-verified' ? { not_verified_reason: notVerifiedReason ?? undefined } : {}),
   };
 }
 
 // One secret-path set (KTD3), consumed by both the R16 warning and the
 // deny-read set — widened past the reviewer's minimum so a credential file is
 // not silently sent to a model provider. Matched against basenames.
-export const SECRET_PATH_PATTERNS = Object.freeze([
+export const SECRET_PATH_PATTERNS: readonly RegExp[] = Object.freeze([
   /^\.env(\..+)?$/i,
   /\.pem$/i,
   /\.key$/i,
@@ -76,32 +103,33 @@ const MAX_EVIDENCE_CHARS = 600;
  * Constraining shape here does not by itself stop suppression (an empty
  * findings array is valid) — the mechanical cross-check in U7 does that (AE9).
  */
-export function validateFinding(f) {
+export function validateFinding(f: unknown): ValidationResult {
   if (f === null || typeof f !== 'object' || Array.isArray(f)) {
     return { ok: false, error: 'finding must be an object' };
   }
-  if (!Number.isInteger(f.reason) || !(f.reason in REASONS)) {
-    return { ok: false, error: `unknown reason id: ${JSON.stringify(f.reason)}` };
+  const o = f as Record<string, unknown>;
+  if (!Number.isInteger(o.reason) || !((o.reason as number) in REASONS)) {
+    return { ok: false, error: `unknown reason id: ${JSON.stringify(o.reason)}` };
   }
-  if (!STATUSES.includes(f.status)) {
-    return { ok: false, error: `invalid status: ${JSON.stringify(f.status)}` };
+  if (!STATUSES.includes(o.status as Status)) {
+    return { ok: false, error: `invalid status: ${JSON.stringify(o.status)}` };
   }
-  if (!SEVERITIES.includes(f.severity)) {
-    return { ok: false, error: `invalid severity: ${JSON.stringify(f.severity)}` };
+  if (!SEVERITIES.includes(o.severity as Severity)) {
+    return { ok: false, error: `invalid severity: ${JSON.stringify(o.severity)}` };
   }
-  if (!Array.isArray(f.evidence)) {
+  if (!Array.isArray(o.evidence)) {
     return { ok: false, error: 'evidence must be an array' };
   }
-  if (f.evidence.length > MAX_EVIDENCE_ITEMS) {
+  if (o.evidence.length > MAX_EVIDENCE_ITEMS) {
     return { ok: false, error: `evidence exceeds ${MAX_EVIDENCE_ITEMS} items` };
   }
-  for (const e of f.evidence) {
+  for (const e of o.evidence) {
     if (typeof e !== 'string') return { ok: false, error: 'evidence items must be strings' };
     if (e.length > MAX_EVIDENCE_CHARS) {
       return { ok: false, error: `evidence item exceeds ${MAX_EVIDENCE_CHARS} chars` };
     }
   }
-  if (f.status === 'not-verified' && typeof f.not_verified_reason !== 'string') {
+  if (o.status === 'not-verified' && typeof o.not_verified_reason !== 'string') {
     return { ok: false, error: 'not-verified findings need a not_verified_reason' };
   }
   return { ok: true };
@@ -112,21 +140,22 @@ export function validateFinding(f) {
  * entry per reason id, each valid. Unknown top-level fields are dropped by the
  * caller, not accepted here.
  */
-export function validateFindingsDoc(doc) {
-  if (doc === null || typeof doc !== 'object' || !Array.isArray(doc.reasons)) {
+export function validateFindingsDoc(doc: unknown): ValidationResult {
+  if (doc === null || typeof doc !== 'object' || !Array.isArray((doc as { reasons?: unknown }).reasons)) {
     return { ok: false, error: 'findings doc must be { reasons: [...] }' };
   }
-  const seen = new Set();
-  for (const f of doc.reasons) {
+  const seen = new Set<number>();
+  for (const f of (doc as { reasons: unknown[] }).reasons) {
     const v = validateFinding(f);
     if (!v.ok) return v;
-    if (seen.has(f.reason)) return { ok: false, error: `duplicate reason id: ${f.reason}` };
-    seen.add(f.reason);
+    const reason = (f as Finding).reason;
+    if (seen.has(reason)) return { ok: false, error: `duplicate reason id: ${reason}` };
+    seen.add(reason);
   }
   return { ok: true };
 }
 
 /** True when a basename matches any secret-path pattern (KTD3/R16). */
-export function isSecretPath(basename) {
+export function isSecretPath(basename: string): boolean {
   return SECRET_PATH_PATTERNS.some((re) => re.test(basename));
 }

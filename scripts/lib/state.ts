@@ -13,10 +13,31 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, lstatSync, rmSync }
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
+import type { Finding } from './findings-schema.ts';
 
 const STALE_MS = 15 * 60 * 1000; // an owner silent this long is presumed dead
 
-function root() {
+/**
+ * The persisted shape of one session's state file. `answers`, `cli`, and
+ * `preFix` are reserved for the interview/CLI-choice/pre-fix-marker fields
+ * described above; nothing in this kit reads their internals yet, so they
+ * stay as loosely typed as the module doc comment leaves them. `pid` and
+ * `heartbeat` are stamped by persist(); `findings` is written by the drive
+ * loop via set().
+ */
+export interface SessionData {
+  kitVersion: string;
+  target: string;
+  answers: Record<string, unknown>;
+  completed: number[];
+  cli: string | null;
+  preFix: unknown;
+  findings?: Finding[];
+  pid?: number;
+  heartbeat?: number;
+}
+
+function root(): string {
   const uid = typeof process.getuid === 'function' ? process.getuid() : 'win';
   const base = join(tmpdir(), `wont-scale-${uid}`);
   // Refuse a symlinked or foreign-owned root (KTD9).
@@ -32,12 +53,17 @@ function root() {
   return base;
 }
 
-function keyFor(targetRealPath) {
+function keyFor(targetRealPath: string): string {
   return createHash('sha256').update(targetRealPath).digest('hex').slice(0, 16);
 }
 
 export class Session {
-  constructor(targetRealPath, kitVersion) {
+  target: string;
+  kitVersion: string;
+  file: string;
+  data: SessionData | null;
+
+  constructor(targetRealPath: string, kitVersion: string) {
     this.target = targetRealPath;
     this.kitVersion = kitVersion;
     this.file = join(root(), `${keyFor(targetRealPath)}.json`);
@@ -45,30 +71,30 @@ export class Session {
   }
 
   /** True when another live session already owns this target. */
-  liveOwnerExists() {
+  liveOwnerExists(): boolean {
     if (!existsSync(this.file)) return false;
-    let prior;
-    try { prior = JSON.parse(readFileSync(this.file, 'utf8')); } catch { return false; }
+    let prior: Partial<SessionData>;
+    try { prior = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<SessionData>; } catch { return false; }
     const age = Date.now() - (prior.heartbeat || 0);
     if (age > STALE_MS) return false; // stale — reclaimable
     if (prior.pid === process.pid) return false; // our own
-    try { process.kill(prior.pid, 0); return true; } // alive and signalable
-    catch (e) { return e.code === 'EPERM'; } // EPERM = alive but not ours; ESRCH = dead/reclaimable
+    try { process.kill(prior.pid as number, 0); return true; } // alive and signalable
+    catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } // EPERM = alive but not ours; ESRCH = dead/reclaimable
   }
 
   /** Load prior state for resume, or start fresh. Refuses a live co-owner. */
-  open() {
+  open(): SessionData {
     if (this.liveOwnerExists()) {
-      const err = new Error('another wont-scale session is already running on this target');
+      const err = new Error('another wont-scale session is already running on this target') as NodeJS.ErrnoException;
       err.code = 'LIVE_OWNER';
       throw err;
     }
     if (existsSync(this.file)) {
-      try { this.data = JSON.parse(readFileSync(this.file, 'utf8')); } catch { this.data = null; }
+      try { this.data = JSON.parse(readFileSync(this.file, 'utf8')) as SessionData; } catch { this.data = null; }
     }
     // Kit-version skew: a newer kit reading an older state refuses to continue.
     if (this.data && this.data.kitVersion && this.data.kitVersion !== this.kitVersion) {
-      const err = new Error(`state was written by kit ${this.data.kitVersion}, this is ${this.kitVersion} — start fresh`);
+      const err = new Error(`state was written by kit ${this.data.kitVersion}, this is ${this.kitVersion} — start fresh`) as NodeJS.ErrnoException;
       err.code = 'VERSION_SKEW';
       throw err;
     }
@@ -79,15 +105,16 @@ export class Session {
     return this.data;
   }
 
-  set(patch) { Object.assign(this.data, patch); this.persist(); }
-  markComplete(reason) { if (!this.data.completed.includes(reason)) this.data.completed.push(reason); this.persist(); }
-  isComplete(reason) { return this.data.completed.includes(reason); }
+  set(patch: Partial<SessionData>): void { Object.assign(this.data as SessionData, patch); this.persist(); }
+  markComplete(reason: number): void { const data = this.data as SessionData; if (!data.completed.includes(reason)) data.completed.push(reason); this.persist(); }
+  isComplete(reason: number): boolean { return (this.data as SessionData).completed.includes(reason); }
 
-  persist() {
-    this.data.pid = process.pid;
-    this.data.heartbeat = Date.now();
-    writeFileSync(this.file, JSON.stringify(this.data, null, 2), { mode: 0o600 });
+  persist(): void {
+    const data = this.data as SessionData;
+    data.pid = process.pid;
+    data.heartbeat = Date.now();
+    writeFileSync(this.file, JSON.stringify(data, null, 2), { mode: 0o600 });
   }
 
-  close() { try { rmSync(this.file, { force: true }); } catch { /* ignore */ } }
+  close(): void { try { rmSync(this.file, { force: true }); } catch { /* ignore */ } }
 }

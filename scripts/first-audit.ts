@@ -8,8 +8,8 @@
  *
  * Zero dependencies. Node >= 18.
  *
- * Usage:
- *   node scripts/first-audit.mjs [target-dir] [flags]
+ * Authored in TypeScript, run as compiled JS from dist/ (`npm run build` first):
+ *   node dist/first-audit.js [target-dir] [flags]
  *
  * Every question has a flag, so the wizard is scriptable:
  *   --users=none|beta|real     --money=yes|no        --pii=yes|no|unsure
@@ -24,6 +24,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, cpSync } from 'node:fs';
+import type { Dirent } from 'node:fs';
 import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
@@ -33,7 +34,15 @@ const SERIES = 'https://papa.onle.gs/writing';
 
 // ---------------------------------------------------------------- reasons ---
 
-const REASONS = {
+interface ReasonInfo {
+  slug: string;
+  title: string;
+  article: string;
+  fix: string;
+  time: string;
+}
+
+const REASONS: Record<number, ReasonInfo> = {
   1:  { slug: 'data-models',       title: 'You have six data models and you think you have one',
         article: `${SERIES}/you-have-six-data-models.html`,
         fix: 'Write down the one canonical model for your core entity; add real foreign keys', time: 'an afternoon' },
@@ -67,13 +76,16 @@ const REASONS = {
 };
 
 // When two findings tie on severity, this is the order that kills you first.
-const KILL_ORDER = [4, 5, 3, 6, 9, 8, 2, 7, 1, 10];
+const KILL_ORDER: number[] = [4, 5, 3, 6, 9, 8, 2, 7, 1, 10];
 
 // ------------------------------------------------------------------- args ---
 
-const argv = process.argv.slice(2);
-const flags = {};
-let targetArg = null;
+/** A parsed CLI flag value: `--foo=bar` yields a string, bare `--foo` yields true. */
+type FlagValue = string | true;
+
+const argv: string[] = process.argv.slice(2);
+const flags: Record<string, FlagValue> = {};
+let targetArg: string | null = null;
 for (const a of argv) {
   if (a.startsWith('--')) {
     const [k, v] = a.slice(2).split('=');
@@ -82,7 +94,7 @@ for (const a of argv) {
     targetArg = a;
   }
 }
-const TARGET = resolve(flags.target || targetArg || process.cwd());
+const TARGET = resolve((flags.target || targetArg || process.cwd()) as string);
 const NON_INTERACTIVE = Boolean(flags.yes || flags.json);
 const WRITE = !flags['no-write'];
 
@@ -92,19 +104,25 @@ if (!existsSync(TARGET) || !statSync(TARGET).isDirectory()) {
 }
 
 const isTTY = process.stdout.isTTY && !process.env.NO_COLOR;
-const bold = (s) => (isTTY ? `\x1b[1m${s}\x1b[0m` : s);
-const dim = (s) => (isTTY ? `\x1b[2m${s}\x1b[0m` : s);
-const cyan = (s) => (isTTY ? `\x1b[36m${s}\x1b[0m` : s);
+const bold = (s: string): string => (isTTY ? `\x1b[1m${s}\x1b[0m` : s);
+const dim = (s: string): string => (isTTY ? `\x1b[2m${s}\x1b[0m` : s);
+const cyan = (s: string): string => (isTTY ? `\x1b[36m${s}\x1b[0m` : s);
 
 // -------------------------------------------------------------- detection ---
 
-function readJSON(p) {
-  try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; }
+function readJSON<T = unknown>(p: string): T | null {
+  try { return JSON.parse(readFileSync(p, 'utf8')) as T; } catch { return null; }
 }
 
-function walk(dir, matcher, { maxDepth = 4, maxHits = 5 } = {}, depth = 0, hits = []) {
+function walk(
+  dir: string,
+  matcher: (name: string, path: string) => boolean,
+  { maxDepth = 4, maxHits = 5 }: { maxDepth?: number; maxHits?: number } = {},
+  depth = 0,
+  hits: string[] = [],
+): string[] {
   if (depth > maxDepth || hits.length >= maxHits) return hits;
-  let entries = [];
+  let entries: Dirent[] = [];
   try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return hits; }
   for (const e of entries) {
     if (hits.length >= maxHits) break;
@@ -116,10 +134,42 @@ function walk(dir, matcher, { maxDepth = 4, maxHits = 5 } = {}, depth = 0, hits 
   return hits;
 }
 
-function detect(target) {
-  const pkg = readJSON(join(target, 'package.json'));
-  const deps = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
-  const has = (...names) => names.find((n) => Object.keys(deps).some((d) => d === n || d.startsWith(n)));
+interface PackageJson {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+}
+
+/** What detect() infers about a target repo's stack, plus the derived summary line. */
+interface Detected {
+  node: boolean;
+  framework: string | null;
+  orm: string | null;
+  supabaseClient: boolean;
+  firebase: boolean;
+  authDep: string | null;
+  payments: string | null;
+  metered: string | null;
+  telemetry: string | null;
+  queue: string | null;
+  prismaSchema: boolean;
+  supabaseDir: boolean;
+  migrationsDir: boolean;
+  docker: boolean;
+  deploy: string[];
+  ci: boolean;
+  tests: boolean;
+  readme: boolean;
+  webhookFiles: string[];
+  envFile: boolean;
+  envIgnored: boolean;
+  readmeHasSetup: boolean;
+  summary: string;
+}
+
+function detect(target: string): Detected {
+  const pkg = readJSON<PackageJson>(join(target, 'package.json'));
+  const deps: Record<string, string> = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
+  const has = (...names: string[]): string | undefined => names.find((n) => Object.keys(deps).some((d) => d === n || d.startsWith(n)));
 
   const d = {
     node: Boolean(pkg),
@@ -151,7 +201,7 @@ function detect(target) {
       try { return readFileSync(join(target, '.gitignore'), 'utf8').split('\n').some((l) => l.trim().match(/^\.env(\..*)?$/) || l.trim() === '.env*'); }
       catch { return false; }
     })(),
-  };
+  } as Detected;
 
   d.readmeHasSetup = d.readme && /(^|\n)#+.*\b(setup|install|getting started|running|develop)/i
     .test((() => { try { return readFileSync(join(target, 'README.md'), 'utf8'); } catch { return ''; } })());
@@ -173,7 +223,10 @@ function detect(target) {
 
 // -------------------------------------------------------------- questions ---
 
-function defaultsFrom(d) {
+/** Interview answers: each QUESTIONS key maps to one of that question's option keys. */
+type Answers = Record<string, string>;
+
+function defaultsFrom(d: Detected): Answers {
   return {
     users: 'beta',
     money: d.payments ? 'yes' : 'no',
@@ -189,7 +242,13 @@ function defaultsFrom(d) {
   };
 }
 
-const QUESTIONS = [
+interface QuestionDef {
+  key: string;
+  text: string;
+  options: Record<string, string>;
+}
+
+const QUESTIONS: QuestionDef[] = [
   { key: 'users', text: 'Who uses this today?',
     options: { none: 'just me', beta: 'invited beta users', real: 'real users in production' } },
   { key: 'money', text: 'Does real money move through it (payments, credits, billing)?',
@@ -212,16 +271,16 @@ const QUESTIONS = [
     options: { pager: 'error tracker alerts me', logs: "I'd see it in logs eventually", users: 'a user would email me' } },
 ];
 
-async function interview(defaults) {
-  const answers = {};
+async function interview(defaults: Answers): Promise<Answers> {
+  const answers: Answers = {};
   // flag overrides first
   for (const q of QUESTIONS) {
     if (flags[q.key] !== undefined) {
-      if (!q.options[flags[q.key]]) {
+      if (!q.options[flags[q.key] as string]) {
         console.error(`Invalid --${q.key}=${flags[q.key]} (expected: ${Object.keys(q.options).join('|')})`);
         process.exit(1);
       }
-      answers[q.key] = flags[q.key];
+      answers[q.key] = flags[q.key] as string;
     }
   }
   if (NON_INTERACTIVE) {
@@ -261,7 +320,7 @@ async function interview(defaults) {
       const marker = k === def ? cyan(' (default)') : '';
       console.log(`   ${i + 1}) ${q.options[k]}${marker}`);
     });
-    let ans = null;
+    let ans: string | null = null;
     while (ans === null) {
       const raw = (await rl.question('   > ')).trim();
       if (raw === '') ans = def;
@@ -278,13 +337,39 @@ async function interview(defaults) {
 
 // ---------------------------------------------------------------- scoring ---
 
-function score(a, d) {
-  const tier = a.users === 'real' && (a.money === 'yes' || a.pii === 'yes') ? 'tier2' : 'tier1';
+/** The wizard's own priority scale (distinct from the shared audit-run Severity). */
+type Priority = 'critical' | 'high' | 'advisory' | 'not_applicable';
+
+interface PriorityEntry {
+  priority: Priority;
+  because: string;
+}
+
+interface ScoredPriority {
+  reason: number;
+  slug: string;
+  priority: Priority;
+  because: string;
+}
+
+interface NotApplicableEntry {
+  reason: number;
+  because: string;
+}
+
+interface ScoreResult {
+  tier: 'tier1' | 'tier2';
+  priorities: ScoredPriority[];
+  notApplicable: NotApplicableEntry[];
+}
+
+function score(a: Answers, d: Detected): ScoreResult {
+  const tier: 'tier1' | 'tier2' = a.users === 'real' && (a.money === 'yes' || a.pii === 'yes') ? 'tier2' : 'tier1';
   const real = a.users === 'real';
   const stakes = a.money === 'yes' || a.pii === 'yes';
 
-  const P = {}; // reason -> {priority, because}
-  const set = (r, priority, because) => { P[r] = { priority, because }; };
+  const P: Record<number, PriorityEntry> = {}; // reason -> {priority, because}
+  const set = (r: number, priority: Priority, because: string): void => { P[r] = { priority, because }; };
 
   set(1, tier === 'tier2' ? 'high' : 'advisory', 'every audit starts by asking the schema what a user is');
   if (d.prismaSchema && d.supabaseDir) set(1, 'high', 'two schema sources detected (prisma/ and supabase/) — the model has already forked');
@@ -332,12 +417,12 @@ function score(a, d) {
   else if (a.bus === 'no') set(10, 'high', 'if you cannot hand it over, you cannot debug it under pressure either');
   else set(10, 'advisory', 'keep ADRs for anything structural; the rule stands — no merge you cannot explain');
 
-  const rank = { critical: 0, high: 1, advisory: 2 };
-  const priorities = Object.entries(P)
+  const rank: Record<'critical' | 'high' | 'advisory', number> = { critical: 0, high: 1, advisory: 2 };
+  const priorities: ScoredPriority[] = Object.entries(P)
     .filter(([, v]) => v.priority !== 'not_applicable')
-    .map(([r, v]) => ({ reason: Number(r), slug: REASONS[r].slug, ...v }))
-    .sort((x, y) => rank[x.priority] - rank[y.priority] || KILL_ORDER.indexOf(x.reason) - KILL_ORDER.indexOf(y.reason));
-  const notApplicable = Object.entries(P)
+    .map(([r, v]) => ({ reason: Number(r), slug: REASONS[Number(r)].slug, ...v }))
+    .sort((x, y) => rank[x.priority as 'critical' | 'high' | 'advisory'] - rank[y.priority as 'critical' | 'high' | 'advisory'] || KILL_ORDER.indexOf(x.reason) - KILL_ORDER.indexOf(y.reason));
+  const notApplicable: NotApplicableEntry[] = Object.entries(P)
     .filter(([, v]) => v.priority === 'not_applicable')
     .map(([r, v]) => ({ reason: Number(r), because: v.because }));
 
@@ -346,10 +431,10 @@ function score(a, d) {
 
 // ---------------------------------------------------------------- outputs ---
 
-function renderPlan(project, det, answers, { tier, priorities, notApplicable }) {
+function renderPlan(project: string, det: Detected, answers: Answers, { tier, priorities, notApplicable }: ScoreResult): string {
   const top = priorities.slice(0, 3);
   const rest = priorities.slice(3);
-  const L = [];
+  const L: string[] = [];
   L.push(`# First audit — ${project}`);
   L.push('');
   L.push(`_Generated ${new Date().toISOString().slice(0, 10)} by the [wont-scale](https://github.com/papaonlegs/wont-scale) first-audit wizard._`);
@@ -364,7 +449,7 @@ function renderPlan(project, det, answers, { tier, priorities, notApplicable }) 
     L.push(`### ${i + 1}. ${r.title} — ${p.priority.toUpperCase()}`);
     L.push(`- **Why this is top for you:** ${p.because}.`);
     L.push(`- **First fix:** ${r.fix} (${r.time}).`);
-    L.push(`- **Read:** [${r.article.split('/').pop().replace('.html', '')}](${r.article})`);
+    L.push(`- **Read:** [${r.article.split('/').pop()!.replace('.html', '')}](${r.article})`);
     L.push('');
   });
   if (rest.length) {
@@ -385,25 +470,25 @@ function renderPlan(project, det, answers, { tier, priorities, notApplicable }) 
   L.push('');
   L.push('- **Claude Code:** install the kit (`/plugin marketplace add papaonlegs/wont-scale`, then `/plugin install wont-scale@wont-scale`), then run `/scale-audit` — it reads `wont-scale.config.json` and audits in the order above. One reason at a time: `/scale-audit 4`.');
   L.push('- **Any AI coding tool:** paste a reason module from `skills/scale-audit/references/` into the chat and ask it to run the Checks section against this repo.');
-  L.push('- **Re-run after fixes:** the audit report diffs against the previous run; this plan regenerates with `node scripts/first-audit.mjs` from the kit.');
+  L.push('- **Re-run after fixes:** the audit report diffs against the previous run; this plan regenerates with `node dist/first-audit.js` from the kit.');
   L.push('');
   L.push(`_The ten reasons, in full: [${SERIES}/index.html](${SERIES}/index.html)_`);
   L.push('');
   return L.join('\n');
 }
 
-function nextSteps(det, target) {
-  const L = [];
+function nextSteps(det: Detected, target: string): string {
+  const L: string[] = [];
   L.push(bold('\nNext steps'));
   L.push(`  1. Read ${cyan('FIRST-AUDIT.md')} — your top three are not the same as anyone else's.`);
   if (existsSync(join(target, '.claude')) || det.node) {
     L.push(`  2. Claude Code: ${cyan('/plugin marketplace add papaonlegs/wont-scale')} then ${cyan('/plugin install wont-scale@wont-scale')}, then ${cyan('/scale-audit')}.`);
   }
   if (existsSync(join(target, '.cursor'))) {
-    L.push(`  3. Cursor detected: ${cyan('node scripts/assemble.mjs --guardrails --tool cursor')} > ${cyan('.cursor/rules/wont-scale.mdc')}.`);
+    L.push(`  3. Cursor detected: ${cyan('node dist/assemble.js --guardrails --tool cursor')} > ${cyan('.cursor/rules/wont-scale.mdc')}.`);
   }
   if (existsSync(join(target, '.github'))) {
-    L.push(`  4. Copilot: ${cyan('node scripts/assemble.mjs --guardrails --tool copilot')} >> ${cyan('.github/copilot-instructions.md')}.`);
+    L.push(`  4. Copilot: ${cyan('node dist/assemble.js --guardrails --tool copilot')} >> ${cyan('.github/copilot-instructions.md')}.`);
   }
   L.push(`  ${dim('Guardrails for any agent: templates/AGENTS.snippet.md → your AGENTS.md / CLAUDE.md.')}`);
   if (det.envFile && !det.envIgnored) {
@@ -412,7 +497,7 @@ function nextSteps(det, target) {
   return L.join('\n');
 }
 
-function installClaude(target) {
+function installClaude(target: string): string {
   const dest = join(target, '.claude');
   mkdirSync(join(dest, 'skills'), { recursive: true });
   mkdirSync(join(dest, 'agents'), { recursive: true });
@@ -440,7 +525,17 @@ if (!flags.json) {
 const answers = await interview(defaultsFrom(det));
 const result = score(answers, det);
 
-const config = {
+interface Config {
+  version: number;
+  created: string;
+  tier: 'tier1' | 'tier2';
+  stack: string;
+  answers: Answers;
+  priorities: ScoredPriority[];
+  not_applicable: NotApplicableEntry[];
+}
+
+const config: Config = {
   version: 1,
   created: new Date().toISOString(),
   tier: result.tier,

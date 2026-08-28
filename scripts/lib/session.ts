@@ -9,19 +9,21 @@
  */
 
 import { readdirSync, readFileSync, existsSync, realpathSync } from 'node:fs';
+import type { Dirent } from 'node:fs';
 import { join, relative } from 'node:path';
 import { homedir } from 'node:os';
-import { REASON_IDS, isSecretPath, finding, validateFinding } from './findings-schema.mjs';
-import { runMechanical, reconcile } from './mechanical.mjs';
+import { REASON_IDS, isSecretPath, finding, validateFinding } from './findings-schema.ts';
+import type { Finding, Status } from './findings-schema.ts';
+import { runMechanical, reconcile } from './mechanical.ts';
 
-const PROJECT_MARKERS = ['package.json', 'pyproject.toml', 'go.mod', 'Gemfile', 'Cargo.toml', 'pom.xml', '.git', 'requirements.txt', 'composer.json'];
+const PROJECT_MARKERS: string[] = ['package.json', 'pyproject.toml', 'go.mod', 'Gemfile', 'Cargo.toml', 'pom.xml', '.git', 'requirements.txt', 'composer.json'];
 
 /**
  * Resolve and vet the target directory. Refuses $HOME, filesystem root, and any
  * directory with no project marker — a hero command run from ~ must not audit a
  * whole home directory. Returns the real absolute path or throws.
  */
-export function resolveTarget(dir) {
+export function resolveTarget(dir: string): string {
   const real = realpathSync(dir);
   if (real === realpathSync(homedir())) throw new Error('refusing to audit your home directory — pass a project path with `sh -s -- /path/to/app`');
   if (real === '/' || real === realpathSync('/')) throw new Error('refusing to audit the filesystem root');
@@ -31,11 +33,11 @@ export function resolveTarget(dir) {
 }
 
 /** Scan the target's top levels for secret-bearing files (R16/KTD3). */
-export function findSecretFiles(root, { maxDepth = 3 } = {}) {
-  const found = [];
-  const walk = (dir, depth) => {
+export function findSecretFiles(root: string, { maxDepth = 3 }: { maxDepth?: number } = {}): string[] {
+  const found: string[] = [];
+  const walk = (dir: string, depth: number): void => {
     if (depth > maxDepth) return;
-    let entries;
+    let entries: Dirent[];
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
       if (e.name === 'node_modules' || e.name === '.git') continue;
@@ -54,9 +56,9 @@ export function findSecretFiles(root, { maxDepth = 3 } = {}) {
  * the probe will contact and the secret files present, so the reader learns
  * their code is about to leave the machine before it does.
  */
-export function disclosure(adaptersPresent, secretFiles) {
+export function disclosure(adaptersPresent: Array<{ provider: string }>, secretFiles: string[]): string {
   const providers = [...new Set(adaptersPresent.map((a) => a.provider))];
-  const lines = [];
+  const lines: string[] = [];
   lines.push('Before I probe anything: the audit sends the code in this directory to');
   lines.push(`your own AI CLI's model provider (${providers.join(', ') || 'the detected provider'}). That includes`);
   lines.push("your employer's or customers' code if this is a work repo. Nothing is stored by");
@@ -76,13 +78,27 @@ export function disclosure(adaptersPresent, secretFiles) {
  * malformed drive result degrades to the mechanical floor rather than being run
  * as data. This is the read-back the review flagged as missing.
  */
-export function readDriveFindings(outFile, reason, fallback) {
+export function readDriveFindings(outFile: string, reason: number, fallback: Finding): Finding {
   if (!existsSync(outFile)) return fallback;
-  let parsed;
+  let parsed: unknown;
   try { parsed = JSON.parse(readFileSync(outFile, 'utf8')); } catch { return fallback; }
-  if (parsed && parsed.reason === reason && validateFinding(parsed).ok) return parsed;
+  if (parsed !== null && typeof parsed === 'object' && (parsed as { reason?: unknown }).reason === reason && validateFinding(parsed).ok) return parsed as Finding;
   return fallback;
 }
+
+/** Minimal shape of the session state object this loop reads and writes (see lib/state). */
+interface SessionLike {
+  data: { findings?: Finding[] } | null;
+  isComplete(reason: number): boolean;
+  markComplete(reason: number): void;
+  set(patch: Record<string, unknown>): void;
+}
+
+/** A driven module call: returns a finding, or null/undefined on failure (caller falls back). */
+type DriveModule = (reason: number, root: string, mechanical: Finding[]) => Promise<Finding | null | undefined> | Finding | null | undefined;
+
+/** Per-module progress callback; status is the finding's status, or 'resumed' for a skipped/prior module. */
+type OnProgress = (reason: number, status: Status | 'resumed') => void;
 
 /**
  * Run the driven audit loop over the ten modules. `driveModule(reason, root)`
@@ -91,15 +107,20 @@ export function readDriveFindings(outFile, reason, fallback) {
  * result becomes not-verified (AE9). `session` records per-module completion for
  * resume; already-complete reasons are skipped.
  */
-export async function runAuditLoop({ root, driveModule, session = null, onProgress = () => {} }) {
+export async function runAuditLoop({ root, driveModule, session = null, onProgress = () => {} }: {
+  root: string;
+  driveModule: DriveModule;
+  session?: SessionLike | null;
+  onProgress?: OnProgress;
+}): Promise<Finding[]> {
   const mechanical = runMechanical(root); // one walk; also threaded to the driver
-  const findings = [];
+  const findings: Finding[] = [];
   for (const n of REASON_IDS) {
-    if (session && session.isComplete(n) && session.data.findings) {
+    if (session && session.isComplete(n) && session.data?.findings) {
       const prior = session.data.findings.find((f) => f.reason === n);
       if (prior) { findings.push(prior); onProgress(n, 'resumed'); continue; }
     }
-    let f;
+    let f: Finding | null | undefined;
     try { f = await driveModule(n, root, mechanical); }
     catch (e) { f = finding(n, 'not-verified', [], `drive failed: ${String(e).slice(0, 120)}`); }
     if (!f) f = finding(n, 'not-verified', [], 'drive returned nothing');

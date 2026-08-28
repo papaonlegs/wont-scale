@@ -5,15 +5,16 @@ import { readFileSync, writeFileSync, mkdtempSync, chmodSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { cleanup } from './helpers/fixtures.mjs';
+import type { SpawnSyncOptions, SpawnSyncReturns } from 'node:child_process';
+import { cleanup } from './helpers/fixtures.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const INSTALL = join(ROOT, 'install.sh');
-const toClean = [];
+const toClean: string[] = [];
 after(() => toClean.forEach(cleanup));
 
-const runSh = (script, args = [], opts = {}) =>
-  spawnSync('sh', [script, ...args], { encoding: 'utf8', timeout: 15000, ...opts });
+const runSh = (script: string, args: string[] = [], opts: SpawnSyncOptions = {}): SpawnSyncReturns<string> =>
+  spawnSync('sh', [script, ...args], { encoding: 'utf8', timeout: 15000, ...opts }) as SpawnSyncReturns<string>;
 
 test('install.sh is POSIX-clean under sh -n (no bashisms that break parsing)', () => {
   const r = spawnSync('sh', ['-n', INSTALL], { encoding: 'utf8' });
@@ -52,7 +53,7 @@ test('an unreleased script (placeholder digest) refuses to run', () => {
   assert.match(r.stderr, /no pinned digest/);
 });
 
-test('release.mjs stamps a real digest so the released installer would not refuse', () => {
+test('release.ts stamps a real digest so the released installer would not refuse', () => {
   // Dry check: the stamping produces a 64-hex digest and version substitution.
   const text = readFileSync(INSTALL, 'utf8');
   const stamped = text

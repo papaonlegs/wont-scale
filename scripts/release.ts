@@ -2,14 +2,17 @@
 /**
  * Build the release tarball and stamp its digest into install.sh (plan U8).
  *
- *   node scripts/release.mjs <version>   e.g. v0.1.0
+ *   node scripts/release.ts <version>   e.g. v0.1.0
  *
- * Produces dist/wont-scale-<version>.tar.gz containing the kit (the payload the
- * session runs), computes its SHA-256, and writes that digest into a copy of
- * install.sh at dist/install.sh — so the published installer carries the
- * integrity anchor for the exact tarball it points at (KTD6). The tarball URL in
- * install.sh already pins <version>; publishing both as release assets is the
- * final manual step.
+ * The kit is authored in TypeScript and shipped as compiled JavaScript, so
+ * readers on Node 18 run it without a toolchain. This first compiles the
+ * sources to dist/, then produces release/wont-scale-<version>.tar.gz containing
+ * that dist/ plus the modules (the payload the session runs), computes its
+ * SHA-256, and writes that digest into a copy of install.sh at
+ * release/install.sh — so the published installer carries the integrity anchor
+ * for the exact tarball it points at (KTD6). The tarball URL in install.sh
+ * already pins <version>; publishing both as release assets is the final manual
+ * step.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -21,21 +24,28 @@ import { createHash } from 'node:crypto';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-// What ships in the payload: the runnable kit, not the tests or dev scaffolding.
+// What ships in the payload: the compiled kit (dist/) and the modules it reads,
+// not the TypeScript sources, the tests, or dev scaffolding.
 const INCLUDE = [
-  'scripts', 'skills', 'agents', 'audit', 'templates', 'docs/ci',
+  'dist', 'skills', 'agents', 'audit', 'templates', 'docs/ci',
   'package.json', 'README.md', 'LICENSE', '.claude-plugin',
 ];
 
-function main() {
+function main(): void {
   const version = process.argv[2];
   if (!version || !/^v\d+\.\d+\.\d+$/.test(version)) {
-    console.error('usage: release.mjs vX.Y.Z');
+    console.error('usage: release.ts vX.Y.Z');
     process.exit(2);
   }
-  const dist = join(ROOT, 'dist');
-  mkdirSync(dist, { recursive: true });
-  const tarball = join(dist, `wont-scale-${version}.tar.gz`);
+
+  // Compile TypeScript to dist/ first — the tarball ships the JavaScript, so the
+  // payload must be freshly built from the current sources, never a stale dist/.
+  const tsc = join(ROOT, 'node_modules', '.bin', 'tsc');
+  execFileSync(tsc, ['-p', join(ROOT, 'tsconfig.build.json')], { cwd: ROOT, stdio: 'inherit' });
+
+  const out = join(ROOT, 'release');
+  mkdirSync(out, { recursive: true });
+  const tarball = join(out, `wont-scale-${version}.tar.gz`);
 
   // Stage the included paths under a prefixed dir, then tar that — portable
   // across BSD tar (macOS) and GNU tar (the Linux release workflow), neither of
@@ -56,15 +66,15 @@ function main() {
   const installer = readFileSync(join(ROOT, 'install.sh'), 'utf8')
     .replace(/WONT_SCALE_VERSION="v[^"]*"/, `WONT_SCALE_VERSION="${version}"`)
     .replace(/WONT_SCALE_SHA256="[^"]*"/, `WONT_SCALE_SHA256="${sha}"`);
-  writeFileSync(join(dist, 'install.sh'), installer);
+  writeFileSync(join(out, 'install.sh'), installer);
 
   const installerSha = createHash('sha256').update(installer).digest('hex');
   console.error(`release ${version}:`);
   console.error(`  tarball:   ${tarball}`);
   console.error(`  tarball sha256:   ${sha}`);
-  console.error(`  installer: dist/install.sh`);
+  console.error(`  installer: release/install.sh`);
   console.error(`  installer sha256: ${installerSha}  (publish this in the README/gate email)`);
-  console.error('\nUpload both dist/ files as assets on the GitHub release for this tag.');
+  console.error('\nUpload both release/ files as assets on the GitHub release for this tag.');
 }
 
 main();

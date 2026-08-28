@@ -8,9 +8,10 @@
  * professional nudge (R11/AE4).
  */
 
-import { REASONS, severityRank } from './findings-schema.mjs';
+import { REASONS, severityRank } from './findings-schema.ts';
+import type { Finding, Severity } from './findings-schema.ts';
 
-const SEVERITY_HEADING = {
+const SEVERITY_HEADING: Record<Severity, string> = {
   critical: 'Critical — fix before more users arrive',
   high: 'High — fix before scale or payments',
   advisory: 'Advisory — schedule it',
@@ -19,17 +20,30 @@ const SERIES = 'https://papa.onle.gs/writing/index.html';
 
 // Reasons whose fix is structural, not a one-step change — a finding here that a
 // reader cannot self-fix is where R11's "consult a professional" belongs.
-const STRUCTURAL_REASONS = new Set([4, 5, 1, 7]);
+const STRUCTURAL_REASONS = new Set<number>([4, 5, 1, 7]);
 
 const REVERT_BEGIN = '<!-- wont-scale:revert:begin -->';
 const REVERT_END = '<!-- wont-scale:revert:end -->';
+
+export interface RevertBlock {
+  sha: string;
+  command: string;
+}
+
+export interface RenderOptions {
+  project?: string;
+  date?: string;
+  stack?: string;
+  previous?: string | null;
+  revert?: RevertBlock | null;
+}
 
 /**
  * Redact secret-shaped values from evidence (RD5): the report is written to the
  * target root and may be committed, so it must never carry a live secret. Keep
  * file:line and pattern name; replace long high-entropy or known-token runs.
  */
-export function redact(text) {
+export function redact(text: unknown): string {
   return String(text)
     // known token prefixes
     .replace(/\b(sk|pk|rk|ghp|gho|xox[baprs]|AKIA|AIza)[-_A-Za-z0-9]{10,}\b/g, '[redacted-token]')
@@ -39,12 +53,12 @@ export function redact(text) {
     .replace(/\b[A-Za-z0-9_\-]{32,}\b/g, '[redacted]');
 }
 
-function escapeMarkerText(text) {
+function escapeMarkerText(text: unknown): string {
   // Agent-authored evidence must never forge the revert delimiter (KTD9).
   return String(text).split(REVERT_BEGIN).join('').split(REVERT_END).join('');
 }
 
-function line(f) {
+function line(f: Finding): string {
   const r = REASONS[f.reason];
   const ev = (f.evidence || []).map((e) => redact(escapeMarkerText(e))).join('; ');
   const nudge = STRUCTURAL_REASONS.has(f.reason) && f.status === 'finding'
@@ -58,17 +72,17 @@ function line(f) {
  * note; `opts.revert` = { sha, command } writes the durable, strictly-delimited
  * revert block that U6's parser is the sole consumer of.
  */
-export function renderReport(findings, { project = 'your project', date = 'today', stack = '', previous = null, revert = null } = {}) {
-  const bySeverity = { critical: [], high: [], advisory: [] };
-  const notVerified = [];
-  const clean = [];
+export function renderReport(findings: Finding[], { project = 'your project', date = 'today', stack = '', previous = null, revert = null }: RenderOptions = {}): string {
+  const bySeverity: Record<Severity, Finding[]> = { critical: [], high: [], advisory: [] };
+  const notVerified: Finding[] = [];
+  const clean: Finding[] = [];
   for (const f of findings) {
     if (f.status === 'not-verified') notVerified.push(f);
     else if (f.status === 'clean') clean.push(f);
     else bySeverity[f.severity]?.push(f);
   }
 
-  const out = [];
+  const out: string[] = [];
   out.push(`# Won't-Scale Audit — ${project} — ${date}`);
   out.push('');
   if (stack) out.push(`**Stack:** ${stack}`);
@@ -81,7 +95,7 @@ export function renderReport(findings, { project = 'your project', date = 'today
     out.push('');
   }
 
-  for (const sev of ['critical', 'high', 'advisory']) {
+  for (const sev of ['critical', 'high', 'advisory'] as Severity[]) {
     const items = bySeverity[sev].sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
     if (!items.length) continue;
     out.push(`## ${SEVERITY_HEADING[sev]}`);
@@ -132,7 +146,7 @@ export function renderReport(findings, { project = 'your project', date = 'today
  * strict 40-hex SHA and a single command line from inside the delimiters, so a
  * report quoting a hostile repo cannot forge a marker that reverts elsewhere.
  */
-export function parseRevertBlock(reportText) {
+export function parseRevertBlock(reportText: string): RevertBlock | null {
   const start = reportText.indexOf(REVERT_BEGIN);
   const end = reportText.indexOf(REVERT_END);
   if (start === -1 || end === -1 || end < start) return null;

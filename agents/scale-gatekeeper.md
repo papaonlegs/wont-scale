@@ -54,7 +54,7 @@ VERDICT: PASS | WARN | BLOCK
 BLOCK only for findings that will fail at scale or expose data — not style. If nothing triggers, verdict PASS with one line saying which gates were checked. Be brief; the value is the catch, not the ceremony.
 
 <!-- wont-scale:begin -->
-## Compressed checks (generated — regenerate with `node scripts/assemble.mjs`)
+## Compressed checks (generated — regenerate with `node dist/assemble.js`)
 
 When `CLAUDE_PLUGIN_ROOT` is unset the full modules are unavailable; audit against these:
 

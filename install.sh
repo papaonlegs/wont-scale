@@ -18,7 +18,7 @@ set -eu
 # --- pinned release + embedded integrity anchor (KTD6) ----------------------
 WONT_SCALE_VERSION="v0.1.0"
 WONT_SCALE_TARBALL_URL="https://github.com/papaonlegs/wont-scale/releases/download/${WONT_SCALE_VERSION}/wont-scale-${WONT_SCALE_VERSION}.tar.gz"
-# The expected tarball digest is written here at release time by scripts/release.mjs.
+# The expected tarball digest is written here at release time by scripts/release.ts.
 # A literal placeholder means an unreleased checkout; the script refuses to run.
 WONT_SCALE_SHA256="__WONT_SCALE_SHA256__"
 
@@ -48,7 +48,7 @@ install_hint() {
 main() {
   # Reject an unreleased script rather than fetching an unpinned payload.
   case "$WONT_SCALE_SHA256" in
-    __WONT_SCALE_SHA256__|"") die "this install.sh has no pinned digest — build a release with scripts/release.mjs first" ;;
+    __WONT_SCALE_SHA256__|"") die "this install.sh has no pinned digest — build a release with scripts/release.ts first" ;;
   esac
 
   # Target directory: `sh -s -- /path/to/app`, else the current directory.
@@ -103,11 +103,11 @@ main() {
   # for the session's prompts (rustup pattern). No TTY at all -> require --yes.
   say ""
   if [ ! -t 0 ] && [ -t 1 ]; then
-    exec node "$KIT_DIR/scripts/audit-session.mjs" --target "$TARGET" < /dev/tty
+    exec node "$KIT_DIR/dist/audit-session.js" --target "$TARGET" < /dev/tty
   elif [ ! -t 0 ] && [ ! -t 1 ]; then
-    exec node "$KIT_DIR/scripts/audit-session.mjs" --target "$TARGET" --yes
+    exec node "$KIT_DIR/dist/audit-session.js" --target "$TARGET" --yes
   else
-    exec node "$KIT_DIR/scripts/audit-session.mjs" --target "$TARGET"
+    exec node "$KIT_DIR/dist/audit-session.js" --target "$TARGET"
   fi
 }
 

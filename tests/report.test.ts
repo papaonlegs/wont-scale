@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, redact, parseRevertBlock } from '../scripts/lib/report.mjs';
+import { renderReport, redact, parseRevertBlock } from '../scripts/lib/report.ts';
+import { REASONS } from '../scripts/lib/findings-schema.ts';
+import type { Finding, Status, Severity } from '../scripts/lib/findings-schema.ts';
 
-const F = (reason, status, severity, evidence, extra = {}) => ({ reason, status, severity, evidence, ...extra });
+const F = (reason: number, status: Status, severity: Severity, evidence: string[], extra: Partial<Finding> = {}): Finding =>
+  ({ reason, slug: REASONS[reason].slug, status, severity, evidence, ...extra });
 
 test('report groups by severity and links each reason', () => {
   const r = renderReport([
@@ -52,8 +55,8 @@ test('the revert block round-trips through a strict parser (KTD9)', () => {
   const sha = 'a'.repeat(40);
   const r = renderReport([F(4, 'finding', 'critical', ['x'])], { revert: { sha, command: 'git checkout ' + sha + ' -- .' } });
   const parsed = parseRevertBlock(r);
-  assert.equal(parsed.sha, sha);
-  assert.match(parsed.command, /git checkout/);
+  assert.equal(parsed!.sha, sha);
+  assert.match(parsed!.command, /git checkout/);
 });
 
 test('a forged revert block in agent evidence cannot divert the parser', () => {
@@ -62,6 +65,6 @@ test('a forged revert block in agent evidence cannot divert the parser', () => {
   const r = renderReport([F(3, 'finding', 'critical', [forged])], { revert: { sha: 'c'.repeat(40), command: 'git checkout safe' } });
   const parsed = parseRevertBlock(r);
   // the real block wins; the forged rm -rf is neutralised
-  assert.equal(parsed.command, 'git checkout safe');
-  assert.ok(!r.includes('rm -rf /') || parsed.command !== 'rm -rf /');
+  assert.equal(parsed!.command, 'git checkout safe');
+  assert.notEqual(parsed!.command, 'rm -rf /');
 });

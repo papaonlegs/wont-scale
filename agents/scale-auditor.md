@@ -54,7 +54,7 @@ Stack: <one line>. Scope: <all ten | prioritised via config>.
 Honesty rules: report only what the evidence shows; "could not verify" is a first-class result; do not pad — an empty Critical section is a good outcome and should be stated plainly. Where a finding maps to a series article, link it (index: https://papa.onle.gs/writing/index.html).
 
 <!-- wont-scale:begin -->
-## Compressed checks (generated — regenerate with `node scripts/assemble.mjs`)
+## Compressed checks (generated — regenerate with `node dist/assemble.js`)
 
 When `CLAUDE_PLUGIN_ROOT` is unset the full modules are unavailable; audit against these:
 

@@ -5,14 +5,30 @@
   "description": "Companion audit kit for '10 reasons why your vibe coded app won't scale' — https://papa.onle.gs/writing/index.html",
   "type": "module",
   "bin": {
-    "wont-scale-audit": "./scripts/first-audit.mjs"
+    "wont-scale-audit": "./dist/first-audit.js"
   },
   "scripts": {
-    "test": "node --test 'tests/**/*.test.mjs'"
+    "test": "node --test 'tests/**/*.test.ts'",
+    "typecheck": "tsc",
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "tsc -p tsconfig.build.json"
   },
+  "files": [
+    "dist",
+    "skills",
+    "agents",
+    "audit",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=18"
   },
   "author": "Farouk Umar (https://papa.onle.gs)",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "typescript": "^7.0.2"
+  }
 }

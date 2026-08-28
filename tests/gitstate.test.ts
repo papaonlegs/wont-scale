@@ -2,12 +2,12 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { safeState, manifest, containmentDiff } from '../scripts/lib/gitstate.mjs';
-import { makeTempRepo, write, initGit, git, cleanup } from './helpers/fixtures.mjs';
+import { safeState, manifest, containmentDiff } from '../scripts/lib/gitstate.ts';
+import { makeTempRepo, write, initGit, git, cleanup } from './helpers/fixtures.ts';
 
-const toClean = [];
+const toClean: string[] = [];
 after(() => toClean.forEach(cleanup));
-const repo = () => { const d = makeTempRepo('wont-scale-git-'); toClean.push(d); return d; };
+const repo = (): string => { const d = makeTempRepo('wont-scale-git-'); toClean.push(d); return d; };
 
 test('safeState classifies clean, dirty, no-git, unborn-HEAD, mid-merge', () => {
   const noGit = repo();

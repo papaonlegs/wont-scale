@@ -2,10 +2,25 @@
  * The assembler (plan U2): every surface that speaks the audit taxonomy is
  * generated from the ten modules, so the session, the plugin, the agents, and
  * the guardrail files never drift apart. Pure string builders here; the thin
- * CLI in scripts/assemble.mjs writes them to disk.
+ * CLI in scripts/assemble.ts writes them to disk.
  */
 
-import { loadModules, reasonIndex, taxonomyDigest, auditPrompt } from './modules.mjs';
+import { loadModules, reasonIndex, taxonomyDigest, auditPrompt } from './modules.ts';
+import type { Finding, Severity, Tier } from './findings-schema.ts';
+
+/** A parsed audit module, as produced by modules.ts's parseModule. */
+interface Module {
+  n: number;
+  filename: string;
+  slug: string;
+  title: string;
+  article: string;
+  tier: Tier;
+  severity: Severity;
+  firstFix: string;
+  guardrail: string;
+  checks: string;
+}
 
 const SERIES = 'https://papa.onle.gs/writing/index.html';
 const REPO = 'https://github.com/papaonlegs/wont-scale';
@@ -14,7 +29,7 @@ export const END = '<!-- wont-scale:end -->';
 
 const htmlBanner = `<!-- wont-scale guardrails — generated from the audit modules; regenerate, don't hand-edit.\n     Source: ${REPO} · Series: ${SERIES} -->`;
 
-function rulesBody(modules) {
+function rulesBody(modules: Module[]): string {
   // m.title already carries its number (the module H1 is "4 — Authorisation is a vibe").
   return modules
     .filter((m) => m.guardrail)
@@ -23,7 +38,7 @@ function rulesBody(modules) {
 }
 
 /** The committed AGENTS.md snippet and on-demand per-tool variants (R12). */
-export function guardrails(tool, modules = loadModules()) {
+export function guardrails(tool?: string, modules: Module[] = loadModules()): string {
   const body = rulesBody(modules);
   switch (tool) {
     case 'agents':
@@ -41,7 +56,7 @@ export function guardrails(tool, modules = loadModules()) {
 }
 
 /** Replace the content between the wont-scale markers, or append a marked block. */
-export function replaceMarked(existing, inner) {
+export function replaceMarked(existing: string, inner: string): string {
   const block = `${BEGIN}\n${inner}\n${END}`;
   if (existing.includes(BEGIN) && existing.includes(END)) {
     return existing.replace(new RegExp(`${BEGIN}[\\s\\S]*?${END}`), block);
@@ -50,25 +65,25 @@ export function replaceMarked(existing, inner) {
 }
 
 /** The compact reason checklist injected into the two agent fallbacks. */
-export function fallbackChecklist(modules = loadModules()) {
+export function fallbackChecklist(modules: Module[] = loadModules()): string {
   const lines = modules.map((m) =>
     `${m.n}. **${m.title.replace(/^\d+\s*—\s*/, '')}** (${m.tier}, ${m.severity}) — ${m.firstFix || 'see the module'}`);
-  return `## Compressed checks (generated — regenerate with \`node scripts/assemble.mjs\`)\n\nWhen \`CLAUDE_PLUGIN_ROOT\` is unset the full modules are unavailable; audit against these:\n\n${lines.join('\n')}\n\nFull modules and evidence: ${SERIES}`;
+  return `## Compressed checks (generated — regenerate with \`node dist/assemble.js\`)\n\nWhen \`CLAUDE_PLUGIN_ROOT\` is unset the full modules are unavailable; audit against these:\n\n${lines.join('\n')}\n\nFull modules and evidence: ${SERIES}`;
 }
 
 /** audit/CHECKLIST.md tier lines, regenerated from the reconciled tier field. */
-export function checklistTiers(modules = loadModules()) {
+export function checklistTiers(modules: Module[] = loadModules()): string {
   const t1 = modules.filter((m) => m.tier === 'T1').map((m) => m.n).sort((a, b) => a - b);
   return `**Tier 1 — before real users arrive:** ${t1.join(', ')}. These are the ones that become a breach or a double charge, not a slowdown.`;
 }
 
 /** The reason index as JSON — replaces the wizard's hand-copied REASONS. */
-export function reasonIndexJson(modules = loadModules()) {
+export function reasonIndexJson(modules: Module[] = loadModules()): string {
   return JSON.stringify(reasonIndex(modules), null, 2);
 }
 
 /** The audit drive prompt for one reason (1-10). */
-export function auditPromptFor(n, modules = loadModules()) {
+export function auditPromptFor(n: number | string, modules: Module[] = loadModules()): string {
   const m = modules.find((x) => x.n === Number(n));
   if (!m) throw new Error(`no module numbered ${n}`);
   return auditPrompt(m);
@@ -79,7 +94,7 @@ export function auditPromptFor(n, modules = loadModules()) {
  * fields only — never agent free-text passthrough (AE9/KTD3) — and carrying the
  * negative constraints that keep the fix contained.
  */
-export function fixPrompt(finding, modules = loadModules()) {
+export function fixPrompt(finding: Finding, modules: Module[] = loadModules()): string {
   const m = modules.find((x) => x.n === Number(finding.reason));
   if (!m) throw new Error(`no module numbered ${finding.reason}`);
   const evidence = Array.isArray(finding.evidence) ? finding.evidence.slice(0, 8) : [];
