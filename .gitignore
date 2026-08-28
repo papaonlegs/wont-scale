@@ -6,3 +6,6 @@ node_modules/
 /WONT-SCALE-REPORT.md
 /FIRST-AUDIT.md
 /wont-scale.config.json
+
+# Compound Engineering local scratch
+.context/compound-engineering/
