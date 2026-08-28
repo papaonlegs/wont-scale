@@ -171,7 +171,7 @@ function detect(target: string): Detected {
   const deps: Record<string, string> = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
   const has = (...names: string[]): string | undefined => names.find((n) => Object.keys(deps).some((d) => d === n || d.startsWith(n)));
 
-  const d = {
+  const base: Omit<Detected, 'readmeHasSetup' | 'summary'> = {
     node: Boolean(pkg),
     framework: has('next') ? 'next' : has('react') ? 'react' : has('express') ? 'express' :
                has('fastify') ? 'fastify' : has('hono') ? 'hono' : null,
@@ -201,24 +201,24 @@ function detect(target: string): Detected {
       try { return readFileSync(join(target, '.gitignore'), 'utf8').split('\n').some((l) => l.trim().match(/^\.env(\..*)?$/) || l.trim() === '.env*'); }
       catch { return false; }
     })(),
-  } as Detected;
+  };
 
-  d.readmeHasSetup = d.readme && /(^|\n)#+.*\b(setup|install|getting started|running|develop)/i
+  const readmeHasSetup = base.readme && /(^|\n)#+.*\b(setup|install|getting started|running|develop)/i
     .test((() => { try { return readFileSync(join(target, 'README.md'), 'utf8'); } catch { return ''; } })());
 
-  d.summary = [
-    d.framework ? d.framework : d.node ? 'node' : 'not a Node project (detection limited)',
-    d.orm, d.supabaseClient ? 'supabase-js' : null, d.firebase ? 'firebase' : null,
-    d.authDep ? `auth:${d.authDep}` : 'no auth dep found',
-    d.payments ? `payments:${d.payments}` : null,
-    d.metered ? `metered:${d.metered}` : null,
-    d.telemetry ? `telemetry:${d.telemetry}` : 'no telemetry dep found',
-    d.queue ? `queue:${d.queue}` : null,
-    d.deploy.length ? `deploy:${d.deploy.join(',')}` : d.docker ? 'deploy:docker' : null,
-    d.tests ? 'tests:present' : 'tests:none found',
+  const summary = [
+    base.framework ? base.framework : base.node ? 'node' : 'not a Node project (detection limited)',
+    base.orm, base.supabaseClient ? 'supabase-js' : null, base.firebase ? 'firebase' : null,
+    base.authDep ? `auth:${base.authDep}` : 'no auth dep found',
+    base.payments ? `payments:${base.payments}` : null,
+    base.metered ? `metered:${base.metered}` : null,
+    base.telemetry ? `telemetry:${base.telemetry}` : 'no telemetry dep found',
+    base.queue ? `queue:${base.queue}` : null,
+    base.deploy.length ? `deploy:${base.deploy.join(',')}` : base.docker ? 'deploy:docker' : null,
+    base.tests ? 'tests:present' : 'tests:none found',
   ].filter(Boolean).join(' · ');
 
-  return d;
+  return { ...base, readmeHasSetup, summary };
 }
 
 // -------------------------------------------------------------- questions ---
@@ -339,6 +339,8 @@ async function interview(defaults: Answers): Promise<Answers> {
 
 /** The wizard's own priority scale (distinct from the shared audit-run Severity). */
 type Priority = 'critical' | 'high' | 'advisory' | 'not_applicable';
+/** A still-relevant priority: `not_applicable` reasons are filtered out before ranking. */
+type ActivePriority = Exclude<Priority, 'not_applicable'>;
 
 interface PriorityEntry {
   priority: Priority;
@@ -348,7 +350,7 @@ interface PriorityEntry {
 interface ScoredPriority {
   reason: number;
   slug: string;
-  priority: Priority;
+  priority: ActivePriority;
   because: string;
 }
 
@@ -417,11 +419,11 @@ function score(a: Answers, d: Detected): ScoreResult {
   else if (a.bus === 'no') set(10, 'high', 'if you cannot hand it over, you cannot debug it under pressure either');
   else set(10, 'advisory', 'keep ADRs for anything structural; the rule stands — no merge you cannot explain');
 
-  const rank: Record<'critical' | 'high' | 'advisory', number> = { critical: 0, high: 1, advisory: 2 };
+  const rank: Record<ActivePriority, number> = { critical: 0, high: 1, advisory: 2 };
   const priorities: ScoredPriority[] = Object.entries(P)
-    .filter(([, v]) => v.priority !== 'not_applicable')
+    .filter((e): e is [string, PriorityEntry & { priority: ActivePriority }] => e[1].priority !== 'not_applicable')
     .map(([r, v]) => ({ reason: Number(r), slug: REASONS[Number(r)].slug, ...v }))
-    .sort((x, y) => rank[x.priority as 'critical' | 'high' | 'advisory'] - rank[y.priority as 'critical' | 'high' | 'advisory'] || KILL_ORDER.indexOf(x.reason) - KILL_ORDER.indexOf(y.reason));
+    .sort((x, y) => rank[x.priority] - rank[y.priority] || KILL_ORDER.indexOf(x.reason) - KILL_ORDER.indexOf(y.reason));
   const notApplicable: NotApplicableEntry[] = Object.entries(P)
     .filter(([, v]) => v.priority === 'not_applicable')
     .map(([r, v]) => ({ reason: Number(r), because: v.because }));

@@ -10,6 +10,7 @@
 
 import { REASONS, severityRank } from './findings-schema.ts';
 import type { Finding, Severity } from './findings-schema.ts';
+import type { RevertMarker } from './fix.ts';
 
 const SEVERITY_HEADING: Record<Severity, string> = {
   critical: 'Critical — fix before more users arrive',
@@ -25,17 +26,12 @@ const STRUCTURAL_REASONS = new Set<number>([4, 5, 1, 7]);
 const REVERT_BEGIN = '<!-- wont-scale:revert:begin -->';
 const REVERT_END = '<!-- wont-scale:revert:end -->';
 
-export interface RevertBlock {
-  sha: string;
-  command: string;
-}
-
 export interface RenderOptions {
   project?: string;
   date?: string;
   stack?: string;
   previous?: string | null;
-  revert?: RevertBlock | null;
+  revert?: RevertMarker | null;
 }
 
 /**
@@ -146,7 +142,7 @@ export function renderReport(findings: Finding[], { project = 'your project', da
  * strict 40-hex SHA and a single command line from inside the delimiters, so a
  * report quoting a hostile repo cannot forge a marker that reverts elsewhere.
  */
-export function parseRevertBlock(reportText: string): RevertBlock | null {
+export function parseRevertBlock(reportText: string): RevertMarker | null {
   const start = reportText.indexOf(REVERT_BEGIN);
   const end = reportText.indexOf(REVERT_END);
   if (start === -1 || end === -1 || end < start) return null;

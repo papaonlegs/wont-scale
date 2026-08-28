@@ -60,6 +60,9 @@ export const STATUSES: readonly Status[] = Object.freeze(['finding', 'not-verifi
 /** Ordinal rank of a severity for sorting — the one source of the ordering. */
 export const severityRank = (s: Severity): number => SEVERITIES.indexOf(s);
 
+/** Membership test that narrows `unknown` to a union member of the frozen list. */
+const isOneOf = <T extends string>(arr: readonly T[], v: unknown): v is T => (arr as readonly unknown[]).includes(v);
+
 /**
  * Build a finding for a reason from its canonical slug and severity. The single
  * builder used by the mechanical path and the session, so the shape (and the
@@ -108,13 +111,13 @@ export function validateFinding(f: unknown): ValidationResult {
     return { ok: false, error: 'finding must be an object' };
   }
   const o = f as Record<string, unknown>;
-  if (!Number.isInteger(o.reason) || !((o.reason as number) in REASONS)) {
+  if (typeof o.reason !== 'number' || !Number.isInteger(o.reason) || !(o.reason in REASONS)) {
     return { ok: false, error: `unknown reason id: ${JSON.stringify(o.reason)}` };
   }
-  if (!STATUSES.includes(o.status as Status)) {
+  if (!isOneOf(STATUSES, o.status)) {
     return { ok: false, error: `invalid status: ${JSON.stringify(o.status)}` };
   }
-  if (!SEVERITIES.includes(o.severity as Severity)) {
+  if (!isOneOf(SEVERITIES, o.severity)) {
     return { ok: false, error: `invalid severity: ${JSON.stringify(o.severity)}` };
   }
   if (!Array.isArray(o.evidence)) {
@@ -135,6 +138,11 @@ export function validateFinding(f: unknown): ValidationResult {
   return { ok: true };
 }
 
+/** Type-predicate form of {@link validateFinding} — narrows `unknown` to `Finding`. */
+export function isFinding(f: unknown): f is Finding {
+  return validateFinding(f).ok;
+}
+
 /**
  * Validate a whole findings document: { reasons: Finding[] } with exactly one
  * entry per reason id, each valid. Unknown top-level fields are dropped by the
@@ -146,11 +154,9 @@ export function validateFindingsDoc(doc: unknown): ValidationResult {
   }
   const seen = new Set<number>();
   for (const f of (doc as { reasons: unknown[] }).reasons) {
-    const v = validateFinding(f);
-    if (!v.ok) return v;
-    const reason = (f as Finding).reason;
-    if (seen.has(reason)) return { ok: false, error: `duplicate reason id: ${reason}` };
-    seen.add(reason);
+    if (!isFinding(f)) return validateFinding(f);
+    if (seen.has(f.reason)) return { ok: false, error: `duplicate reason id: ${f.reason}` };
+    seen.add(f.reason);
   }
   return { ok: true };
 }

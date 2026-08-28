@@ -12,7 +12,7 @@ import { readdirSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import type { Dirent } from 'node:fs';
 import { join, relative } from 'node:path';
 import { homedir } from 'node:os';
-import { REASON_IDS, isSecretPath, finding, validateFinding } from './findings-schema.ts';
+import { REASON_IDS, isSecretPath, finding, isFinding } from './findings-schema.ts';
 import type { Finding, Status } from './findings-schema.ts';
 import { runMechanical, reconcile } from './mechanical.ts';
 
@@ -82,7 +82,7 @@ export function readDriveFindings(outFile: string, reason: number, fallback: Fin
   if (!existsSync(outFile)) return fallback;
   let parsed: unknown;
   try { parsed = JSON.parse(readFileSync(outFile, 'utf8')); } catch { return fallback; }
-  if (parsed !== null && typeof parsed === 'object' && (parsed as { reason?: unknown }).reason === reason && validateFinding(parsed).ok) return parsed as Finding;
+  if (isFinding(parsed) && parsed.reason === reason) return parsed;
   return fallback;
 }
 
