@@ -400,10 +400,10 @@ function nextSteps(det, target) {
     L.push(`  2. Claude Code: ${cyan('/plugin marketplace add papaonlegs/wont-scale')} then ${cyan('/plugin install wont-scale@wont-scale')}, then ${cyan('/scale-audit')}.`);
   }
   if (existsSync(join(target, '.cursor'))) {
-    L.push(`  3. Cursor detected: copy ${cyan('templates/cursor-rules/wont-scale.mdc')} into ${cyan('.cursor/rules/')}.`);
+    L.push(`  3. Cursor detected: ${cyan('node scripts/assemble.mjs --guardrails --tool cursor')} > ${cyan('.cursor/rules/wont-scale.mdc')}.`);
   }
   if (existsSync(join(target, '.github'))) {
-    L.push(`  4. Copilot: append ${cyan('templates/copilot-instructions.md')} to ${cyan('.github/copilot-instructions.md')}.`);
+    L.push(`  4. Copilot: ${cyan('node scripts/assemble.mjs --guardrails --tool copilot')} >> ${cyan('.github/copilot-instructions.md')}.`);
   }
   L.push(`  ${dim('Guardrails for any agent: templates/AGENTS.snippet.md → your AGENTS.md / CLAUDE.md.')}`);
   if (det.envFile && !det.envIgnored) {
