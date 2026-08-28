@@ -17,8 +17,7 @@ the audit starts.
 
 ## Which of these matter first
 
-**Tier 1 — before real users arrive:** 3, 4, 5, 6. These are the ones that become a
-breach or a double charge, not a slowdown.
+**Tier 1 — before real users arrive:** 1, 3, 4, 5, 6, 7, 8, 9, 10. These are the ones that become a breach or a double charge, not a slowdown.
 
 **Tier 2 — before scale or payments:** all ten. Run `/first-audit` (or
 `node scripts/first-audit.mjs`) to get the order that fits *your* answers — a weekend

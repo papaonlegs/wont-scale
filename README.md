@@ -21,13 +21,12 @@ same list.
 
 `/first-audit` interviews you (stakes, architecture, team), detects your stack, and
 writes a prioritised plan. Then `/scale-audit` runs the checks and writes an
-evidence-first report. This repo is private — your git credentials for it must work
-(`gh auth setup-git` if the marketplace add fails).
+evidence-first report.
 
 **Any terminal** (no AI required):
 
 ```
-git clone git@github.com:papaonlegs/wont-scale.git
+git clone https://github.com/papaonlegs/wont-scale.git
 node wont-scale/scripts/first-audit.mjs /path/to/your-app
 ```
 
@@ -39,14 +38,15 @@ into your project's `.claude/`.
 **Cursor / Copilot / Codex / Windsurf** — install the guardrails so the failures stop
 being reintroduced:
 
-| Tool | Copy | To |
-|------|------|----|
-| Any agent (AGENTS.md standard) | `templates/AGENTS.snippet.md` | your `AGENTS.md` (append) |
-| Claude Code (manual) | same snippet | your `CLAUDE.md` (append) |
-| Cursor | `templates/cursor-rules/wont-scale.mdc` | `.cursor/rules/` |
-| GitHub Copilot | `templates/copilot-instructions.md` | `.github/copilot-instructions.md` (append) |
-| Windsurf / Devin | `templates/windsurf-rules.md` | `.windsurf/rules/` |
-| CI (PR gatekeeper) | `templates/ci/wont-scale-audit.yml` | `.github/workflows/` |
+| Tool | Command / copy | To |
+|------|----------------|----|
+| Any agent (AGENTS.md standard) | `templates/AGENTS.snippet.md` | your `AGENTS.md` / `CLAUDE.md` (append) |
+| Cursor | `node scripts/assemble.mjs --guardrails --tool cursor` | `.cursor/rules/wont-scale.mdc` |
+| GitHub Copilot | `node scripts/assemble.mjs --guardrails --tool copilot` | `.github/copilot-instructions.md` (append) |
+| Windsurf / Devin | `node scripts/assemble.mjs --guardrails --tool windsurf` | `.windsurf/rules/wont-scale.md` |
+| CI (PR gatekeeper, optional) | `docs/ci/wont-scale-audit.yml` | `.github/workflows/` |
+
+The tool-specific variants are generated on demand from the ten modules rather than committed, so there is one source of truth to keep current.
 
 ## The ten reasons
 
@@ -78,7 +78,7 @@ answer them out loud.
 |-----------|-------|--------------|
 | `/scale-audit` skill | [skills/scale-audit](skills/scale-audit/SKILL.md) | Runs the checks, grades findings (Critical / High / Advisory), writes `WONT-SCALE-REPORT.md`, diffs against the last run. Scope it: `/scale-audit tier1`, `/scale-audit 4`. |
 | `/first-audit` skill | [skills/first-audit](skills/first-audit/SKILL.md) | The setup interview, inside Claude Code. |
-| `scale-guardrails` skill | [skills/scale-guardrails](skills/scale-guardrails/SKILL.md) | Auto-loads the rules when you're coding near one of the ten. |
+| Guardrail generator | [scripts/assemble.mjs](scripts/assemble.mjs) | One canonical snippet (`templates/AGENTS.snippet.md`) plus on-demand tool-specific variants — `node scripts/assemble.mjs --guardrails --tool cursor`. All generated from the ten modules. |
 | `scale-auditor` agent | [agents/scale-auditor.md](agents/scale-auditor.md) | Read-only subagent for the full audit — delegate it and keep working. |
 | `scale-gatekeeper` agent | [agents/scale-gatekeeper.md](agents/scale-gatekeeper.md) | Reviews your working diff against the ten before you merge. PASS / WARN / BLOCK, evidence required. |
 | First-audit wizard | [scripts/first-audit.mjs](scripts/first-audit.mjs) | The interview for plain terminals. Zero dependencies, Node 18+. |
@@ -102,5 +102,4 @@ what a [vibe code audit](https://papa.onle.gs) is for.
 
 ---
 
-MIT licence. The essays remain © [Farouk Umar](https://papa.onle.gs). This repo is
-shared privately; please don't republish it.
+MIT licence. The essays remain © [Farouk Umar](https://papa.onle.gs).
