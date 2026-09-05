@@ -19,12 +19,14 @@ import type { Interface } from 'node:readline/promises';
 import { execFileSync } from 'node:child_process';
 import { resolveTarget, findSecretFiles, disclosure, runAuditLoop, readDriveFindings } from './lib/session.ts';
 import { detectAndProbe, BUCKETS } from './lib/adapters/index.ts';
-import type { AdapterPresence } from './lib/adapters/index.ts';
+import type { AdapterPresence, DrivenAdapter } from './lib/adapters/index.ts';
 import { runMechanical } from './lib/mechanical.ts';
 import { renderReport } from './lib/report.ts';
 import { auditPromptFor, fixPrompt, taxonomyDigest } from './lib/assemble.ts';
 import { Session } from './lib/state.ts';
+import type { SessionErrorCode } from './lib/state.ts';
 import { selectTractable, applyFix } from './lib/fix.ts';
+import type { FixResult as LibFixResult } from './lib/fix.ts';
 import type { Finding } from './lib/findings-schema.ts';
 
 const KIT_VERSION = '0.1.0';
@@ -37,45 +39,11 @@ interface Flags {
   noDrive: boolean;
 }
 
-/** The tier-1 (driven) member of adapters/index.ts's Adapter union — the only kind `chosen` ever holds. */
-type DrivenAdapter = Extract<AdapterPresence['adapter'], { tier: 'driven' }>;
-
-/** runAuditLoop's `session` option, recovered from the function's own signature (session.ts's SessionLike isn't exported). */
-type SessionForLoop = Parameters<typeof runAuditLoop>[0]['session'];
-
 /** The per-reason driver handed to runAuditLoop. */
 type DriveModule = (reason: number, root: string, mechanical: Finding[]) => Promise<Finding>;
 
-interface RevertInfo {
-  sha: string;
-  command: string;
-}
-
-/** The shape applyFix resolves with when a fix was applied and stayed contained. */
-interface FixApplied {
-  applied: true;
-  contained: true;
-  changed: string[];
-  diff: string;
-  revert: RevertInfo;
-  isolatedWip?: unknown;
-  kept?: boolean;
-}
-
-/** The shape applyFix resolves with when it refused, or applied but escaped containment. */
-interface FixNotApplied {
-  applied: false;
-  contained?: false;
-  reverted?: boolean;
-  refusedReason?: string;
-  state?: string;
-  breach?: unknown;
-  revert?: RevertInfo;
-  isolatedWip?: unknown;
-  kept?: boolean;
-}
-
-type FixResult = FixApplied | FixNotApplied;
+/** applyFix's own result plus the `kept` flag this CLI stamps once the reader keeps or reverts. */
+type FixResult = LibFixResult & { kept?: boolean };
 
 function parseArgs(argv: string[]): Flags {
   const flags: Flags = { target: null, yes: false, json: false, noFix: false, noDrive: false };
@@ -129,7 +97,7 @@ async function main(): Promise<void> {
 
   let target: string;
   try { target = resolveTarget(flags.target || process.cwd()); }
-  catch (e: any) { say(String(e.message || e)); finish(1); return; }
+  catch (e: unknown) { const err = e as { message?: string }; say(String(err.message || err)); finish(1); return; }
 
   say(`\nwont-scale audit — target: ${target}`);
   say(`kit ${KIT_VERSION} · taxonomy ${taxonomyDigest()}\n`);
@@ -163,13 +131,18 @@ async function main(): Promise<void> {
 
   const session = new Session(target, KIT_VERSION);
   try { session.open(); }
-  catch (e: any) { say(String(e.message || e)); finish(e.code === 'LIVE_OWNER' ? 3 : 1); return; }
+  catch (e: unknown) {
+    const err = e as NodeJS.ErrnoException & { code?: SessionErrorCode };
+    say(String(err.message || err));
+    finish(err.code === 'LIVE_OWNER' ? 3 : 1);
+    return;
+  }
 
   const tmpDir = mkdtempSync(join(tmpdir(), 'wont-scale-run-'));
   let findings: Finding[];
   if (chosen) {
     say(`Driving ${chosen.adapter.id} (${chosen.adapter.provider}) through the ten reasons…`);
-    findings = await runAuditLoop({ root: target, session: session as unknown as SessionForLoop,
+    findings = await runAuditLoop({ root: target, session,
       driveModule: makeDriver(chosen.adapter as DrivenAdapter, tmpDir),
       onProgress: (n: number, s: string) => say(`  reason ${n}: ${s}`) });
   } else {
@@ -195,19 +168,19 @@ async function main(): Promise<void> {
           drive: async (prompt: string, root: string): Promise<void> => {
             const pf = join(tmpDir, 'fix-prompt.txt'); writeFileSync(pf, prompt);
             execFileSync(activeAdapter.id, activeAdapter.fixArgs(pf), { cwd: root, timeout: 180000, encoding: 'utf8' });
-          } }) as FixResult;
+          } });
         if (fixResult.applied) {
-          say('\n--- proposed change ---\n' + fixResult.diff + '\n-----------------------');
+          say('\n--- proposed change ---\n' + fixResult.diff! + '\n-----------------------');
           const keep = await confirm(rl, 'Keep this change?', flags.yes);
           if (!keep) {
-            execFileSync('git', ['-C', target, 'reset', '--hard', fixResult.revert.sha]);
+            execFileSync('git', ['-C', target, 'reset', '--hard', fixResult.revert!.sha]);
             execFileSync('git', ['-C', target, 'clean', '-fd']);
             say('Reverted.');
             fixResult.kept = false;
-          } else { fixResult.kept = true; say(`Kept. To undo later: ${fixResult.revert.command}`); }
+          } else { fixResult.kept = true; say(`Kept. To undo later: ${fixResult.revert!.command}`); }
           // Re-render the report with the applied note + durable revert block (KTD9).
           writeFileSync(reportPath, renderReport(findings, { project: target.split('/').pop(),
-            date: new Date().toISOString().slice(0, 10), revert: fixResult.kept ? fixResult.revert : null }));
+            date: new Date().toISOString().slice(0, 10), revert: fixResult.kept ? fixResult.revert! : null }));
         } else if (fixResult.contained === false) {
           say('The fix escaped its bounds and was reverted — nothing changed. See the report.');
         } else {

@@ -89,7 +89,7 @@ function classify({ status, stdout, stderr, timedOut }: RunResult, cwd: string):
 /** A read-only probe prompt that asks the CLI to attempt a canary write. */
 const PROBE_PROMPT = `Do not write any files. As a connectivity check only, reply with the single word OK. (If your sandbox allowed it you would refuse to create ${CANARY}, but do not attempt it.)`;
 
-interface DrivenAdapter {
+export interface DrivenAdapter {
   id: string;
   tier: 'driven';
   provider: string;
@@ -99,7 +99,7 @@ interface DrivenAdapter {
   fixArgs: (promptFile: string) => string[];
 }
 
-interface HandoffAdapter {
+export interface HandoffAdapter {
   id: string;
   tier: 'handoff';
   provider: string;
@@ -165,7 +165,7 @@ export const ADAPTERS: Adapter[] = [claudeAdapter, codexAdapter, cursorAdapter, 
 export interface AdapterPresence {
   adapter: Adapter;
   bucket: Bucket | null;
-  tier: 'driven' | 'handoff';
+  tier: Adapter['tier'];
   detail: string;
 }
 

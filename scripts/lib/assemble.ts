@@ -6,21 +6,8 @@
  */
 
 import { loadModules, reasonIndex, taxonomyDigest, auditPrompt } from './modules.ts';
-import type { Finding, Severity, Tier } from './findings-schema.ts';
-
-/** A parsed audit module, as produced by modules.ts's parseModule. */
-interface Module {
-  n: number;
-  filename: string;
-  slug: string;
-  title: string;
-  article: string;
-  tier: Tier;
-  severity: Severity;
-  firstFix: string;
-  guardrail: string;
-  checks: string;
-}
+import type { ParsedModule as Module } from './modules.ts';
+import type { Finding } from './findings-schema.ts';
 
 const SERIES = 'https://papa.onle.gs/writing/index.html';
 const REPO = 'https://github.com/papaonlegs/wont-scale';

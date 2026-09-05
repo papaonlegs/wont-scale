@@ -17,6 +17,9 @@ import type { Finding } from './findings-schema.ts';
 
 const STALE_MS = 15 * 60 * 1000; // an owner silent this long is presumed dead
 
+/** The `.code` values open() stamps on the errors it throws, read back by the CLI. */
+export type SessionErrorCode = 'LIVE_OWNER' | 'VERSION_SKEW';
+
 /**
  * The persisted shape of one session's state file. `answers`, `cli`, and
  * `preFix` are reserved for the interview/CLI-choice/pre-fix-marker fields
@@ -85,7 +88,7 @@ export class Session {
   /** Load prior state for resume, or start fresh. Refuses a live co-owner. */
   open(): SessionData {
     if (this.liveOwnerExists()) {
-      const err = new Error('another wont-scale session is already running on this target') as NodeJS.ErrnoException;
+      const err = new Error('another wont-scale session is already running on this target') as NodeJS.ErrnoException & { code?: SessionErrorCode };
       err.code = 'LIVE_OWNER';
       throw err;
     }
@@ -94,7 +97,7 @@ export class Session {
     }
     // Kit-version skew: a newer kit reading an older state refuses to continue.
     if (this.data && this.data.kitVersion && this.data.kitVersion !== this.kitVersion) {
-      const err = new Error(`state was written by kit ${this.data.kitVersion}, this is ${this.kitVersion} — start fresh`) as NodeJS.ErrnoException;
+      const err = new Error(`state was written by kit ${this.data.kitVersion}, this is ${this.kitVersion} — start fresh`) as NodeJS.ErrnoException & { code?: SessionErrorCode };
       err.code = 'VERSION_SKEW';
       throw err;
     }
@@ -105,12 +108,18 @@ export class Session {
     return this.data;
   }
 
-  set(patch: Partial<SessionData>): void { Object.assign(this.data as SessionData, patch); this.persist(); }
-  markComplete(reason: number): void { const data = this.data as SessionData; if (!data.completed.includes(reason)) data.completed.push(reason); this.persist(); }
-  isComplete(reason: number): boolean { return (this.data as SessionData).completed.includes(reason); }
+  /** The loaded state, or throw — open() populates `data`, so every mutator runs after it. */
+  private requireData(): SessionData {
+    if (!this.data) throw new Error('session state not loaded — call open() first');
+    return this.data;
+  }
+
+  set(patch: Partial<SessionData>): void { Object.assign(this.requireData(), patch); this.persist(); }
+  markComplete(reason: number): void { const data = this.requireData(); if (!data.completed.includes(reason)) data.completed.push(reason); this.persist(); }
+  isComplete(reason: number): boolean { return this.requireData().completed.includes(reason); }
 
   persist(): void {
-    const data = this.data as SessionData;
+    const data = this.requireData();
     data.pid = process.pid;
     data.heartbeat = Date.now();
     writeFileSync(this.file, JSON.stringify(data, null, 2), { mode: 0o600 });

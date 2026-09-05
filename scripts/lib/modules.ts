@@ -46,16 +46,8 @@ export interface ParsedModule {
   checks: string;
 }
 
-/** One row of the reason index — the id/slug/title/article/tier/severity/first-fix data. */
-export interface ReasonIndexEntry {
-  n: number;
-  slug: string;
-  title: string;
-  article: string;
-  tier: Tier;
-  severity: Severity;
-  firstFix: string;
-}
+/** One row of the reason index — the id/slug/title/article/tier/severity/first-fix subset of a module. */
+export type ReasonIndexEntry = Pick<ParsedModule, 'n' | 'slug' | 'title' | 'article' | 'tier' | 'severity' | 'firstFix'>;
 
 /** Parse one module file into structured fields. */
 export function parseModule(filename: string): ParsedModule {

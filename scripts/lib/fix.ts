@@ -10,6 +10,7 @@
 import { REASONS, severityRank } from './findings-schema.ts';
 import type { Finding } from './findings-schema.ts';
 import { safeState, manifest, containmentDiff, git } from './gitstate.ts';
+import type { SafeStateName } from './gitstate.ts';
 
 export interface SkippedFinding {
   reason: number;
@@ -40,7 +41,7 @@ export interface FixResult {
   revert?: RevertMarker;
   isolatedWip?: IsolatedWip | null;
   refusedReason?: string;
-  state?: string;
+  state?: SafeStateName;
   breach?: { gitWrites: string[]; escapes: string[]; unexpected: string[]; committed: boolean };
 }
 
