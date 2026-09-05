@@ -71,19 +71,79 @@ export function disclosure(adaptersPresent: Array<{ provider: string }>, secretF
   return lines.join('\n');
 }
 
+/** Hard cap on the text scanned for a findings object — a runaway transcript is not parsed forever. */
+const MAX_DRIVE_TEXT = 256 * 1024;
+
+/** The end index (exclusive) of the balanced JSON object opening at `start`, or -1. String-aware. */
+function balancedObjectEnd(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === '\\') i++;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') inString = true;
+    else if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return i + 1; }
+  }
+  return -1;
+}
+
 /**
- * Read a driven module's findings JSON back and validate it (KTD1). Returns the
- * validated finding, or the fallback (the mechanical slice) when the file is
- * missing, unparseable, invalid, or for the wrong reason — so a poisoned or
- * malformed drive result degrades to the mechanical floor rather than being run
- * as data. This is the read-back the review flagged as missing.
+ * Pull one validated finding for `reason` out of an agent's final message
+ * (KTD1). The drive is read-only, so the agent cannot write a file; it replies
+ * with the JSON instead, and a model that wraps it in prose or a code fence is
+ * still read correctly. Every candidate object goes through the schema
+ * validator, and a finding for any other reason is rejected as poisoned. Returns
+ * null when nothing valid is present — the caller decides what that means.
+ */
+export function extractFindingJson(text: string, reason: number): Finding | null {
+  const body = String(text ?? '').slice(0, MAX_DRIVE_TEXT);
+  const accept = (candidate: string): Finding | null => {
+    let parsed: unknown;
+    try { parsed = JSON.parse(candidate); } catch { return null; }
+    if (!isFinding(parsed) || parsed.reason !== reason) return null;
+    // A schema-forced output carries an empty not_verified_reason on non-not-verified statuses; drop it.
+    if (parsed.status !== 'not-verified') delete parsed.not_verified_reason;
+    return parsed;
+  };
+  const whole = accept(body.trim());
+  if (whole) return whole;
+  let scanned = 0;
+  for (let i = body.indexOf('{'); i !== -1 && scanned < 400; i = body.indexOf('{', i + 1), scanned++) {
+    const end = balancedObjectEnd(body, i);
+    if (end === -1) continue;
+    const found = accept(body.slice(i, end));
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * What a module reports when the drive produced nothing usable. The mechanical
+ * slice is the floor — but a mechanical `clean` is only "a shallow static check
+ * found nothing", and without the drive that is NOT a verified pass. So a clean
+ * fallback degrades to not-verified carrying `why`; a mechanical finding or an
+ * already-not-verified slice stands as it is.
+ */
+export function degradeToMechanical(fallback: Finding, why: string): Finding {
+  if (fallback.status !== 'clean') return fallback;
+  return finding(fallback.reason, 'not-verified', fallback.evidence, `${why}; the mechanical check alone found nothing, which is not a pass`);
+}
+
+/**
+ * Read a driven module's findings back from a file the CLI wrote (KTD1) and
+ * validate it. Missing, unparseable, invalid, or wrong-reason content degrades
+ * to the mechanical floor via {@link degradeToMechanical} rather than being run
+ * as data — and never surfaces as a verified clean.
  */
 export function readDriveFindings(outFile: string, reason: number, fallback: Finding): Finding {
-  if (!existsSync(outFile)) return fallback;
-  let parsed: unknown;
-  try { parsed = JSON.parse(readFileSync(outFile, 'utf8')); } catch { return fallback; }
-  if (isFinding(parsed) && parsed.reason === reason) return parsed;
-  return fallback;
+  if (!existsSync(outFile)) return degradeToMechanical(fallback, 'the AI drive left no findings output');
+  const parsed = extractFindingJson(readFileSync(outFile, 'utf8'), reason);
+  return parsed ?? degradeToMechanical(fallback, 'the AI drive output held no valid findings JSON for this reason');
 }
 
 /** Minimal shape of the session state object this loop reads and writes (see lib/state). */

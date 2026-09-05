@@ -122,14 +122,17 @@ Run these checks (read-only) and report what you find:
 
 ${module.checks}
 
-Return findings as JSON to the path this session gives you, one object with:
+Do not write any files — this drive is read-only. Return findings as your final
+message: exactly one JSON object, no prose around it, of this shape:
 { "reason": ${module.n}, "status": "finding" | "not-verified" | "clean",
   "severity": "critical" | "high" | "advisory",
   "evidence": ["<file:line or query output>", ...],
   "not_verified_reason": "<required only when status is not-verified>" }
 
-Report "clean" only when a check ran and found nothing. Report "not-verified"
-when a check could not run (no database access, unfamiliar stack) — never as a
-pass. Evidence carries file, line, and pattern name only; never copy a secret
+Report "clean" only when every check ran and found nothing. Report "not-verified"
+only when NO check that ran found a problem and at least one could not run (no
+database access, unfamiliar stack) — never as a pass. If any check that did run
+found a problem, report "finding" and list the checks that could not run as an
+evidence item ("not run: …") rather than downgrading the whole reason. Evidence carries file, line, and pattern name only; never copy a secret
 value into evidence.`;
 }

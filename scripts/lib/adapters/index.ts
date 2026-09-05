@@ -7,14 +7,21 @@
  * a CLI that will not prove it honours read-only is classified not-driveable,
  * never healthy. Bypass-approval flags never appear.
  *
+ * The audit drive is read-only, so the agent is never asked to write its
+ * findings to disk (a read-only sandbox rightly rejects that). Instead each
+ * adapter captures the agent's FINAL MESSAGE through a channel the CLI itself
+ * owns — codex's `--output-last-message` file, claude's `--output-format json`
+ * result — and `auditResult` hands that text back for the session to parse.
+ *
  * Tier-1 (driven): claude, codex — documented fail-closed non-interactive
  * contracts. Tier-2 (hand-off): cursor, gemini — the session prints their
  * prompt for the reader to paste rather than driving them in v1.
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 export const BUCKETS = Object.freeze({
   ABSENT: 'absent',
@@ -55,7 +62,7 @@ function onPath(bin: string): boolean {
 /** Run a bin with args + a short timeout; never throws. */
 function run(bin: string, args: string[], { cwd, timeout = 20000, env }: RunOptions = {}): RunResult {
   try {
-    const r = spawnSync(bin, args, { cwd, timeout, encoding: 'utf8', env: env ? { ...process.env, ...env } : process.env });
+    const r = spawnSync(bin, args, { cwd, timeout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : process.env });
     return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', timedOut: !!(r.error && (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') };
   } catch (e) {
     return { status: null, stdout: '', stderr: String(e), timedOut: false };
@@ -89,14 +96,40 @@ function classify({ status, stdout, stderr, timedOut }: RunResult, cwd: string):
 /** A read-only probe prompt that asks the CLI to attempt a canary write. */
 const PROBE_PROMPT = `Do not write any files. As a connectivity check only, reply with the single word OK. (If your sandbox allowed it you would refuse to create ${CANARY}, but do not attempt it.)`;
 
+/** What the session hands an adapter for one audit drive. */
+export interface AuditInvocation {
+  /** The full prompt text. Passed to the CLI directly — never as an @file reference the model must go and read. */
+  prompt: string;
+  /** The same prompt on disk, for the reader's own hand-off or debugging. */
+  promptFile: string;
+  /** Where the CLI itself (not the sandboxed agent) may write the agent's final message. */
+  outFile: string;
+  /** Optional JSON Schema the CLI can enforce on the final message (codex `--output-schema`). */
+  schemaFile?: string;
+  kitDir?: string;
+}
+
+export interface FixInvocation {
+  prompt: string;
+  promptFile: string;
+}
+
+/** What the drive got back: the CLI's stdout plus the outFile it was offered. */
+export interface DriveOutput {
+  stdout: string;
+  outFile: string;
+}
+
 export interface DrivenAdapter {
   id: string;
   tier: 'driven';
   provider: string;
   detect: () => boolean;
   probe: (cwd: string) => ClassifyResult;
-  auditArgs: (promptFile: string, kitDir?: string) => string[];
-  fixArgs: (promptFile: string) => string[];
+  auditArgs: (inv: AuditInvocation) => string[];
+  /** The agent's final message text, recovered from wherever this CLI puts it. */
+  auditResult: (out: DriveOutput) => string;
+  fixArgs: (inv: FixInvocation) => string[];
 }
 
 export interface HandoffAdapter {
@@ -107,6 +140,10 @@ export interface HandoffAdapter {
 }
 
 type Adapter = DrivenAdapter | HandoffAdapter;
+
+function readIfPresent(file: string): string | null {
+  try { return existsSync(file) ? readFileSync(file, 'utf8') : null; } catch { return null; }
+}
 
 // --- Tier-1: Claude Code ----------------------------------------------------
 export const claudeAdapter: DrivenAdapter = {
@@ -119,22 +156,49 @@ export const claudeAdapter: DrivenAdapter = {
     const r = run('claude', ['-p', PROBE_PROMPT, '--output-format', 'json'], { cwd });
     return classify(r, cwd);
   },
-  auditArgs: (promptFile, kitDir) => ['-p', `@${promptFile}`, '--output-format', 'json', ...(kitDir ? ['--plugin-dir', kitDir] : [])],
-  fixArgs: (promptFile) => ['-p', `@${promptFile}`, '--permission-mode', 'acceptEdits', '--allowedTools', 'Edit,Write'],
+  auditArgs: ({ prompt, kitDir }) => ['-p', prompt, '--output-format', 'json', ...(kitDir ? ['--plugin-dir', kitDir] : [])],
+  // `--output-format json` prints one envelope; the agent's final message is its `result`.
+  auditResult({ stdout }) {
+    try {
+      const parsed: unknown = JSON.parse(stdout);
+      const envelopes = Array.isArray(parsed) ? parsed : [parsed];
+      for (const env of envelopes.reverse()) {
+        if (env && typeof env === 'object' && typeof (env as { result?: unknown }).result === 'string') {
+          return (env as { result: string }).result;
+        }
+      }
+    } catch { /* not an envelope — fall through to the raw text */ }
+    return stdout;
+  },
+  fixArgs: ({ prompt }) => ['-p', prompt, '--permission-mode', 'acceptEdits', '--allowedTools', 'Edit,Write'],
 };
 
 // --- Tier-1: OpenAI Codex ----------------------------------------------------
+// One read-only invocation shape, shared by the probe and the audit drive so the
+// probe exercises exactly what the drive will run (including `-o`, which an
+// older codex lacking the flag fails on — not-driveable, honestly).
+const CODEX_READ_ONLY = ['exec', '--sandbox', 'read-only', '-c', 'approval_policy=never', '--skip-git-repo-check', '--color', 'never'];
+
 export const codexAdapter: DrivenAdapter = {
   id: 'codex',
   tier: 'driven',
   provider: 'OpenAI',
   detect: () => onPath('codex'),
   probe(cwd) {
-    const r = run('codex', ['exec', '--sandbox', 'read-only', '-c', 'approval_policy=never', '--skip-git-repo-check', PROBE_PROMPT], { cwd });
+    const out = join(tmpdir(), `wont-scale-probe-${process.pid}.txt`);
+    const r = run('codex', [...CODEX_READ_ONLY, '-o', out, PROBE_PROMPT], { cwd });
+    try { unlinkSync(out); } catch { /* ignore */ }
     return classify(r, cwd);
   },
-  auditArgs: (promptFile) => ['exec', '--sandbox', 'read-only', '-c', 'approval_policy=never', '--skip-git-repo-check', `@${promptFile}`],
-  fixArgs: (promptFile) => ['exec', '--sandbox', 'workspace-write', '-c', 'approval_policy=never', `@${promptFile}`],
+  auditArgs: ({ prompt, outFile, schemaFile }) => [
+    ...CODEX_READ_ONLY,
+    '-o', outFile,
+    ...(schemaFile ? ['--output-schema', schemaFile] : []),
+    prompt,
+  ],
+  // codex writes the final message to `-o` itself, outside the agent's sandbox.
+  auditResult: ({ stdout, outFile }) => readIfPresent(outFile) ?? stdout,
+  fixArgs: ({ prompt }) => ['exec', '--sandbox', 'workspace-write', '-c', 'approval_policy=never', '--color', 'never', prompt],
 };
 
 // --- Tier-2: hand-off (detected, prompt printed, not driven in v1) -----------

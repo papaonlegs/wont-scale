@@ -45,8 +45,11 @@ export function redact(text: unknown): string {
     .replace(/\b(sk|pk|rk|ghp|gho|xox[baprs]|AKIA|AIza)[-_A-Za-z0-9]{10,}\b/g, '[redacted-token]')
     // generic long high-entropy runs inside quotes (assignments)
     .replace(/(['"])[A-Za-z0-9_\-]{24,}\1/g, '$1[redacted]$1')
-    // bare long alnum runs (>=32) that look like keys
-    .replace(/\b[A-Za-z0-9_\-]{32,}\b/g, '[redacted]');
+    // bare long alnum runs (>=32) that look like keys — but a run of short
+    // underscore/hyphen-joined words (an agent's snake_case descriptor, a
+    // long identifier) is prose, not a secret: only a long unbroken segment
+    // marks a key.
+    .replace(/\b[A-Za-z0-9_\-]{32,}\b/g, (run) => (run.split(/[_-]/).some((seg) => seg.length >= 20) ? '[redacted]' : run));
 }
 
 function escapeMarkerText(text: unknown): string {

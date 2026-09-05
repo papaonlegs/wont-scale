@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { resolveTarget, findSecretFiles, disclosure, runAuditLoop, readDriveFindings } from '../scripts/lib/session.ts';
+import { resolveTarget, findSecretFiles, disclosure, runAuditLoop, readDriveFindings, extractFindingJson, degradeToMechanical } from '../scripts/lib/session.ts';
 import { writeFileSync as wf } from 'node:fs';
 import { Session } from '../scripts/lib/state.ts';
 import type { Finding } from '../scripts/lib/findings-schema.ts';
@@ -106,6 +106,43 @@ test('readDriveFindings reads back and validates the drive output, else falls ba
   assert.equal(readDriveFindings(out, 4, fallback), fallback);
   // missing file -> fallback
   assert.equal(readDriveFindings(join(dir, 'nope.json'), 4, fallback), fallback);
+});
+
+test('a mechanical clean never stands in for a drive that produced nothing (the reason-10 regression)', () => {
+  const dir = repo();
+  // The observed failure: codex found a HIGH bus-factor problem but could not
+  // write findings-10.json under its read-only sandbox; the session fell back
+  // to the mechanical slice, which was clean, and the report said "verified clean".
+  const mechanicalClean: Finding = { reason: 10, slug: 'bus-factor', status: 'clean', severity: 'high', evidence: [] };
+  const missing = readDriveFindings(join(dir, 'findings-10.json'), 10, mechanicalClean);
+  assert.equal(missing.status, 'not-verified');
+  assert.match(missing.not_verified_reason!, /left no findings output/);
+  assert.match(missing.not_verified_reason!, /not a pass/);
+  // a mechanical finding stands: its evidence is real regardless of the drive
+  const mechanicalFinding: Finding = { reason: 8, slug: 'observability', status: 'finding', severity: 'high', evidence: ['no error-tracking dependency found'] };
+  assert.equal(degradeToMechanical(mechanicalFinding, 'drive failed'), mechanicalFinding);
+  // an already not-verified slice is left alone
+  const nv: Finding = { reason: 4, slug: 'authorisation', status: 'not-verified', severity: 'critical', evidence: [], not_verified_reason: 'needs a live database' };
+  assert.equal(degradeToMechanical(nv, 'drive failed'), nv);
+});
+
+test('extractFindingJson reads the finding out of a final message however the model wrapped it', () => {
+  const bare = extractFindingJson('{"reason":10,"slug":"bus-factor","status":"finding","severity":"high","evidence":["no ADR directory"],"not_verified_reason":""}', 10);
+  assert.equal(bare!.status, 'finding');
+  assert.equal('not_verified_reason' in bare!, false, 'the schema-forced empty string is stripped');
+  // prose + fenced block, as codex actually answered when it could not write the file
+  const prose = 'Audit completed with a **high-severity finding**. I could not write findings-10.json.\n\n```json\n{\n  "reason": 10,\n  "status": "finding",\n  "severity": "high",\n  "evidence": ["ADR directory check: none found", "README.md:5-15 — mitigating"]\n}\n```\ntokens used\n42,054';
+  const fenced = extractFindingJson(prose, 10);
+  assert.equal(fenced!.status, 'finding');
+  assert.equal(fenced!.evidence.length, 2);
+  // a string value containing braces does not derail the scan
+  const braces = 'note {not json} then {"reason":3,"status":"clean","severity":"critical","evidence":["pattern {a:b} in src/x.ts:1"]}';
+  assert.equal(extractFindingJson(braces, 3)!.evidence[0], 'pattern {a:b} in src/x.ts:1');
+  // wrong reason is poison, not data; invalid shape is rejected; empty text is null
+  assert.equal(extractFindingJson('{"reason":9,"status":"clean","severity":"high","evidence":[]}', 10), null);
+  assert.equal(extractFindingJson('{"reason":10,"status":"maybe","severity":"high","evidence":[]}', 10), null);
+  assert.equal(extractFindingJson('', 10), null);
+  assert.equal(extractFindingJson('no json here at all', 10), null);
 });
 
 test('kit-version skew on resume refuses rather than continuing', () => {
