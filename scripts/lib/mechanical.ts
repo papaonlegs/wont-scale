@@ -20,6 +20,8 @@ import { REASON_IDS, finding } from './findings-schema.ts';
 import type { Finding } from './findings-schema.ts';
 
 const CODE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|py|rb|go|java|php)$/;
+/** Test, spec, mock and fixture paths — excluded from the hardcoded-secret scan. */
+const TEST_PATH = /(^|\/)(__tests__|__mocks__|test|tests|spec|fixtures?)(\/|$)|\.(test|spec)\.[cm]?[jt]sx?$/;
 const SKIP_DIR = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'vendor', '__pycache__', 'coverage']);
 
 /** One pre-walked source file: its path relative to the audited root, and its text. */
@@ -73,7 +75,9 @@ function grepFiles(files: CodeFile[], re: RegExp, { cap = 5 }: { cap?: number } 
  */
 const DETECTORS: Record<number, Detector> = {
   3(files) { // authentication — hardcoded secrets, non-expiring tokens
-    const secrets = grepFiles(files, /(jwt|token|secret|apikey|api_key)\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]/i);
+    // Test and mock files hold stand-in tokens by design; a hit there is noise, not a credential.
+    const production = files.filter((f) => !TEST_PATH.test(f.rel));
+    const secrets = grepFiles(production, /(jwt|token|secret|apikey|api_key)\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]/i);
     if (secrets.length) return finding(3, 'finding', secrets);
     const noExpiry = grepFiles(files, /jwt\.sign\([^)]*\)/i);
     if (noExpiry.length) return finding(3, 'finding', noExpiry);
@@ -145,22 +149,37 @@ export function runMechanical(root: string): Finding[] {
       : finding(n, 'not-verified', [], STATIC_ONLY_NOT_VERIFIED[n] || 'no mechanical check for this reason'));
 }
 
+const MAX_MERGED_EVIDENCE = 12;
+
 /**
  * AE9 reconcile: given the driven audit's findings and a fresh mechanical run,
  * force any reason the drive reported clean where a mechanical check found a
  * problem to not-verified. Schema validation constrains finding shape; this is
  * what stops a talked-into-clean agent from burying a real defect.
+ *
+ * The mirror case: the drive says not-verified (typically because a database
+ * check could not run) while a mechanical check DID fire. The static evidence
+ * is real whatever else could not be checked, so the reason stands as a
+ * finding carrying both sets of evidence — a gap is not filed under "could
+ * not check" because a different check was unavailable.
  */
 export function reconcile(driveFindings: Finding[], mechanicalFindings: Finding[]): Finding[] {
   const mech = new Map(mechanicalFindings.map((f) => [f.reason, f]));
   return driveFindings.map((d) => {
     const m = mech.get(d.reason);
-    if (d.status === 'clean' && m && m.status === 'finding') {
+    if (!m || m.status !== 'finding') return d;
+    if (d.status === 'clean') {
       return {
         ...d,
         status: 'not-verified',
         not_verified_reason: `drive reported clean but a mechanical check fired: ${m.evidence.join(', ')}`,
       };
+    }
+    if (d.status === 'not-verified') {
+      const { not_verified_reason, ...rest } = d;
+      const evidence = [...new Set([...m.evidence, ...d.evidence])].slice(0, MAX_MERGED_EVIDENCE);
+      const unrun = not_verified_reason ? [`not run: ${not_verified_reason}`] : [];
+      return { ...rest, status: 'finding', severity: m.severity, evidence: [...evidence.slice(0, MAX_MERGED_EVIDENCE - unrun.length), ...unrun] };
     }
     return d;
   });

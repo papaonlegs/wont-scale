@@ -161,6 +161,27 @@ export function validateFindingsDoc(doc: unknown): ValidationResult {
   return { ok: true };
 }
 
+/**
+ * The one-finding contract as JSON Schema, for CLIs that can constrain the
+ * agent's final message to a shape (codex `--output-schema`). Strict-mode
+ * structured outputs require every property listed as required, so
+ * not_verified_reason is always present and empty when unused; the session
+ * strips the empty string on read-back.
+ */
+export const FINDING_JSON_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    reason: { type: 'integer', minimum: 1, maximum: 10 },
+    slug: { type: 'string' },
+    status: { type: 'string', enum: [...STATUSES] },
+    severity: { type: 'string', enum: [...SEVERITIES] },
+    evidence: { type: 'array', items: { type: 'string' }, maxItems: MAX_EVIDENCE_ITEMS },
+    not_verified_reason: { type: 'string' },
+  },
+  required: ['reason', 'slug', 'status', 'severity', 'evidence', 'not_verified_reason'],
+});
+
 /** True when a basename matches any secret-path pattern (KTD3/R16). */
 export function isSecretPath(basename: string): boolean {
   return SECRET_PATH_PATTERNS.some((re) => re.test(basename));

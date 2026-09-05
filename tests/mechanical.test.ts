@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { runMechanical, reconcile } from '../scripts/lib/mechanical.ts';
 import { validateFinding } from '../scripts/lib/findings-schema.ts';
 import type { Finding } from '../scripts/lib/findings-schema.ts';
-import { plantedDefectRepo, cleanRepo, cleanup } from './helpers/fixtures.ts';
+import { plantedDefectRepo, cleanRepo, cleanup, write } from './helpers/fixtures.ts';
 
 const toClean: string[] = [];
 after(() => toClean.forEach(cleanup));
@@ -55,4 +55,32 @@ test('reconcile leaves an honest clean result alone', () => {
   const drive: Finding[] = [{ reason: 8, slug: 'observability', status: 'clean', severity: 'high', evidence: ['sentry configured'] }];
   const reconciled = reconcile(drive, mechanical);
   assert.equal(reconciled[0].status, 'clean');
+});
+
+test('a mock token inside a test file is not a hardcoded credential', () => {
+  const root = cleanRepo(); toClean.push(root);
+  // The observed false positive: `mocks.idToken = "refreshed-id-token"` in a
+  // Next.js page test was reported as a CRITICAL authentication finding.
+  write(root, 'src/app/home/__tests__/page.test.tsx', 'mocks.idToken = "refreshed-id-token";\n');
+  write(root, 'src/__mocks__/auth.ts', 'export const token = "mock-token-value-for-tests";\n');
+  const by = new Map(runMechanical(root).map((f) => [f.reason, f]));
+  assert.equal(by.get(3)!.status, 'clean', JSON.stringify(by.get(3)));
+  // the same line in production code still fires
+  write(root, 'src/lib/auth.ts', 'const idToken = "refreshed-id-token-value";\n');
+  assert.equal(new Map(runMechanical(root).map((f) => [f.reason, f])).get(3)!.status, 'finding');
+});
+
+test('reconcile keeps a mechanical finding when the drive says not-verified', () => {
+  const root = plantedDefectRepo(); toClean.push(root);
+  const mechanical = runMechanical(root);
+  // Observed: codex listed real observability gaps for reason 8 but filed the
+  // reason not-verified because the database queries could not run.
+  const drive: Finding[] = [{ reason: 8, slug: 'observability', status: 'not-verified', severity: 'high', evidence: ['src/app/page.tsx:85: catch discards exception'], not_verified_reason: 'no PostgreSQL client available' }];
+  const [r] = reconcile(drive, mechanical);
+  assert.equal(r.status, 'finding');
+  assert.equal(validateFinding(r).ok, true);
+  assert.ok(r.evidence.some((e) => /console\.log|no error-tracking/.test(e)), 'mechanical evidence carried');
+  assert.ok(r.evidence.includes('src/app/page.tsx:85: catch discards exception'), 'drive evidence carried');
+  assert.ok(r.evidence.some((e) => e.startsWith('not run: no PostgreSQL')), 'what could not run is kept as evidence');
+  assert.equal('not_verified_reason' in r, false);
 });

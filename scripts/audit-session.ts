@@ -3,12 +3,14 @@
  * The interactive audit session (plan U4) — the hero path's Node entry point.
  * The bootstrap (install.sh) execs this after fetching the kit. It resolves the
  * target, discloses and asks consent BEFORE probing, drives the reader's AI CLI
- * through the ten modules (reading each module's findings JSON back), writes the
+ * through the ten modules (reading each module's findings JSON back from the
+ * agent's final message), writes the
  * report, and offers the one consented fix with a shown diff and keep/revert.
  *
  * The testable core lives in scripts/lib/session.ts and the lib modules; this
  * wires the real adapters and I/O around them. Flags: --target <dir>, --yes,
- * --json, --no-fix, --no-drive.
+ * --json, --no-fix, --no-drive, --cli <claude|codex> (pin the driven CLI; the
+ * only way to choose one non-interactively).
  */
 
 import { writeFileSync, mkdtempSync } from 'node:fs';
@@ -17,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import type { Interface } from 'node:readline/promises';
 import { execFileSync } from 'node:child_process';
-import { resolveTarget, findSecretFiles, disclosure, runAuditLoop, readDriveFindings } from './lib/session.ts';
+import { resolveTarget, findSecretFiles, disclosure, runAuditLoop, extractFindingJson, degradeToMechanical } from './lib/session.ts';
 import { detectAndProbe, BUCKETS } from './lib/adapters/index.ts';
 import type { AdapterPresence, DrivenAdapter } from './lib/adapters/index.ts';
 import { runMechanical } from './lib/mechanical.ts';
@@ -27,6 +29,7 @@ import { Session } from './lib/state.ts';
 import type { SessionErrorCode } from './lib/state.ts';
 import { selectTractable, applyFix } from './lib/fix.ts';
 import type { FixResult as LibFixResult } from './lib/fix.ts';
+import { FINDING_JSON_SCHEMA } from './lib/findings-schema.ts';
 import type { Finding } from './lib/findings-schema.ts';
 
 const KIT_VERSION = '0.1.0';
@@ -37,6 +40,8 @@ interface Flags {
   json: boolean;
   noFix: boolean;
   noDrive: boolean;
+  /** A driven CLI id to pin (claude, codex). Null = ask when several are healthy, else the first. */
+  cli: string | null;
 }
 
 /** The per-reason driver handed to runAuditLoop. */
@@ -46,7 +51,7 @@ type DriveModule = (reason: number, root: string, mechanical: Finding[]) => Prom
 type FixResult = LibFixResult & { kept?: boolean };
 
 function parseArgs(argv: string[]): Flags {
-  const flags: Flags = { target: null, yes: false, json: false, noFix: false, noDrive: false };
+  const flags: Flags = { target: null, yes: false, json: false, noFix: false, noDrive: false, cli: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--yes') flags.yes = true;
@@ -54,6 +59,7 @@ function parseArgs(argv: string[]): Flags {
     else if (a === '--no-fix') flags.noFix = true;
     else if (a === '--no-drive') flags.noDrive = true;
     else if (a === '--target') flags.target = argv[++i];
+    else if (a === '--cli') flags.cli = (argv[++i] || '').trim().toLowerCase() || null;
     else if (!a.startsWith('--') && !flags.target) flags.target = a;
   }
   return flags;
@@ -66,25 +72,59 @@ async function confirm(rl: Interface | null, question: string, autoYes: boolean)
   return a === 'y' || a === 'yes';
 }
 
+/** Appended to every module prompt: how the answer comes back, and what sandbox noise to ignore. */
+const DRIVE_OUTPUT_CONTRACT = `Output contract: your final message must be the findings JSON object and nothing
+else — no prose before or after it, no code fence. Do not write any files; the
+session captures your final message itself. If a shell command prints warnings
+about xcrun, DARWIN_USER_TEMP_DIR or a /tmp cache file on macOS, they come from
+the sandbox and are harmless — ignore them and read the command's real output.`;
+
+const DRIVE_TIMEOUT_MS = 300000;
+
+/** Today's date as YYYY-MM-DD in local time — a late-evening run is not filed under yesterday's UTC day. */
+function localDate(d = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** One line, bounded, about why a drive process failed — for the not-verified reason. */
+function describeDriveFailure(e: unknown, adapterId: string): string {
+  const err = e as NodeJS.ErrnoException & { status?: number | null; stderr?: string };
+  if (err && err.code === 'ETIMEDOUT') return `${adapterId} timed out after ${DRIVE_TIMEOUT_MS / 1000}s`;
+  const stderr = String(err?.stderr || '').split('\n').map((l) => l.trim()).filter((l) => l && !/xcrun|DARWIN_USER_TEMP_DIR/.test(l)).pop() || '';
+  const where = typeof err?.status === 'number' ? `exited ${err.status}` : (err?.message || 'failed').split('\n')[0];
+  return `${adapterId} ${where}${stderr ? `: ${stderr.slice(0, 140)}` : ''}`;
+}
+
 /**
  * Drive one module through a healthy tier-1 adapter and READ ITS FINDINGS BACK.
- * The prompt tells the agent to write findings JSON to WONT_SCALE_FINDINGS_OUT;
- * the session parses and validates it (KTD1). Falls back to the pre-computed
- * mechanical slice only when the drive produced nothing valid.
+ * The drive is read-only, so the agent is never asked to write a file (a
+ * read-only sandbox rejects exactly that). The prompt tells it to answer with
+ * the findings JSON as its final message; the adapter recovers that message
+ * through the CLI's own channel (codex `-o`, claude's JSON envelope) and the
+ * session parses and validates it (KTD1). A drive that fails or returns nothing
+ * valid degrades to the mechanical slice — and a mechanical clean is reported
+ * not-verified, never as a pass.
  */
 function makeDriver(adapter: DrivenAdapter, tmpDir: string): DriveModule {
+  const schemaFile = join(tmpDir, 'finding.schema.json');
+  writeFileSync(schemaFile, JSON.stringify(FINDING_JSON_SCHEMA, null, 2));
   return async (reason: number, root: string, mechanical: Finding[]): Promise<Finding> => {
     const promptFile = join(tmpDir, `audit-${reason}.txt`);
     const outFile = join(tmpDir, `findings-${reason}.json`);
-    writeFileSync(promptFile, `${auditPromptFor(reason)}\n\nWrite the JSON object to: ${outFile}`);
+    const prompt = `${auditPromptFor(reason)}\n\n${DRIVE_OUTPUT_CONTRACT}`;
+    writeFileSync(promptFile, prompt);
     const fallback = mechanical.find((f) => f.reason === reason) as Finding;
+    let stdout = '';
     try {
-      execFileSync(adapter.id, adapter.auditArgs(promptFile), {
-        cwd: root, timeout: 120000, encoding: 'utf8',
-        env: { ...process.env, WONT_SCALE_FINDINGS_OUT: outFile },
+      stdout = execFileSync(adapter.id, adapter.auditArgs({ prompt, promptFile, outFile, schemaFile }), {
+        cwd: root, timeout: DRIVE_TIMEOUT_MS, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
-    } catch { return fallback; }
-    return readDriveFindings(outFile, reason, fallback);
+    } catch (e) {
+      return degradeToMechanical(fallback, `the AI drive failed (${describeDriveFailure(e, adapter.id)})`);
+    }
+    const parsed = extractFindingJson(adapter.auditResult({ stdout, outFile }), reason);
+    return parsed ?? degradeToMechanical(fallback, `${adapter.id} returned no valid findings JSON for this reason`);
   };
 }
 
@@ -106,7 +146,13 @@ async function main(): Promise<void> {
 
   // Detect (cheap, local) up front; PROBE only after disclosure + consent, since
   // probing a tier-1 CLI contacts the provider from inside the repo (R16).
-  const detected: AdapterPresence[] = flags.noDrive ? [] : detectAndProbe(target, { detectOnly: true });
+  const allDetected: AdapterPresence[] = flags.noDrive ? [] : detectAndProbe(target, { detectOnly: true });
+  // --cli pins one driven CLI: only it is disclosed, probed, and driven.
+  const detected: AdapterPresence[] = flags.cli ? allDetected.filter((p) => p.tier === 'driven' && p.adapter.id === flags.cli) : allDetected;
+  if (flags.cli && !detected.length && !flags.noDrive) {
+    say(`--cli ${flags.cli}: not found on PATH${allDetected.length ? ` (detected: ${allDetected.map((p) => p.adapter.id).join(', ')})` : ''}. Driven CLIs: claude, codex.`);
+    finish(1); return;
+  }
 
   if (detected.length) {
     say(disclosure(detected.map((p) => p.adapter), secretFiles));
@@ -115,11 +161,18 @@ async function main(): Promise<void> {
     if (!ok) { say('Stopped — nothing was sent. Re-run with --no-drive for the local mechanical report only.'); finish(0); return; }
   }
 
-  const present: AdapterPresence[] = detected.length ? detectAndProbe(target) : [];
+  const present: AdapterPresence[] = detected.length
+    ? detectAndProbe(target).filter((p) => detected.some((d) => d.adapter.id === p.adapter.id))
+    : [];
   const healthy: AdapterPresence[] = present.filter((p) => p.tier === 'driven' && p.bucket === BUCKETS.HEALTHY);
   const unauth: AdapterPresence[] = present.filter((p) => p.bucket === BUCKETS.UNAUTHENTICATED || p.bucket === BUCKETS.TRANSIENT);
   if (!healthy.length && unauth.length) {
     say(`Detected ${unauth.map((p) => p.adapter.id).join(', ')} but ${unauth[0].bucket} — log in and re-run, or continue with the mechanical report.`);
+  }
+  // A pinned CLI that did not probe healthy is a stop, not a silent swap to another provider.
+  if (flags.cli && !healthy.length && present.length) {
+    say(`--cli ${flags.cli} is ${present[0].bucket} (${present[0].detail}) — fix that and re-run, or run without --cli.`);
+    finish(1); return;
   }
   // Multiple healthy CLIs: let the reader choose (else the first).
   let chosen: AdapterPresence | undefined = healthy[0];
@@ -151,7 +204,7 @@ async function main(): Promise<void> {
   }
 
   const reportPath = join(target, 'WONT-SCALE-REPORT.md');
-  writeFileSync(reportPath, renderReport(findings, { project: target.split('/').pop(), date: new Date().toISOString().slice(0, 10) }));
+  writeFileSync(reportPath, renderReport(findings, { project: target.split('/').pop(), date: localDate() }));
   say(`\nReport written: ${reportPath}`);
 
   // The floor (R7/R10): offer one consented fix when a driveable agent is present.
@@ -166,8 +219,8 @@ async function main(): Promise<void> {
         fixResult = await applyFix({ root: target, finding,
           prompt: fixPrompt(finding),
           drive: async (prompt: string, root: string): Promise<void> => {
-            const pf = join(tmpDir, 'fix-prompt.txt'); writeFileSync(pf, prompt);
-            execFileSync(activeAdapter.id, activeAdapter.fixArgs(pf), { cwd: root, timeout: 180000, encoding: 'utf8' });
+            const promptFile = join(tmpDir, 'fix-prompt.txt'); writeFileSync(promptFile, prompt);
+            execFileSync(activeAdapter.id, activeAdapter.fixArgs({ prompt, promptFile }), { cwd: root, timeout: 300000, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
           } });
         if (fixResult.applied) {
           say('\n--- proposed change ---\n' + fixResult.diff! + '\n-----------------------');
@@ -180,7 +233,7 @@ async function main(): Promise<void> {
           } else { fixResult.kept = true; say(`Kept. To undo later: ${fixResult.revert!.command}`); }
           // Re-render the report with the applied note + durable revert block (KTD9).
           writeFileSync(reportPath, renderReport(findings, { project: target.split('/').pop(),
-            date: new Date().toISOString().slice(0, 10), revert: fixResult.kept ? fixResult.revert! : null }));
+            date: localDate(), revert: fixResult.kept ? fixResult.revert! : null }));
         } else if (fixResult.contained === false) {
           say('The fix escaped its bounds and was reverted — nothing changed. See the report.');
         } else {

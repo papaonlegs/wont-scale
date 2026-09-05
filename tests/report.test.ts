@@ -68,3 +68,13 @@ test('a forged revert block in agent evidence cannot divert the parser', () => {
   assert.equal(parsed!.command, 'git checkout safe');
   assert.notEqual(parsed!.command, 'rm -rf /');
 });
+
+test('redaction leaves snake_case descriptors and long identifiers alone', () => {
+  // Observed: an agent's evidence label "logout_only_calls_firebaseSignOut" (33 chars) was blanked to [redacted].
+  const label = 'src/lib/auth-context.tsx:156: logout_only_calls_firebaseSignOut';
+  assert.equal(redact(label), label);
+  assert.equal(redact('signOut_clears_current_user_without_server_revocation'), 'signOut_clears_current_user_without_server_revocation');
+  // a long unbroken segment is still a key
+  assert.match(redact('key=abcdefghijklmnopqrstuvwxyzABCDEF012345'), /\[redacted\]/);
+  assert.match(redact('token=ghp_abcdefghijklmnopqrstuvwxyz0123456789'), /\[redacted-token\]/);
+});
